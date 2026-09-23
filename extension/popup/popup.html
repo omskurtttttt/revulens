@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RevuLens</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="brand">
+        <div class="logo-icon">RL</div>
+        <div class="brand-text">
+          <h1>RevuLens</h1>
+          <span class="subtext">Shopee PH Review Inspector</span>
+        </div>
+      </div>
+      <div id="backend-status" class="status-indicator checking" title="Checking backend status">
+        <span class="dot"></span>
+        <span id="status-label" class="status-text">Connecting</span>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="card stats-card">
+        <h2>Page Analysis</h2>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-value" id="total-analyzed">0</span>
+            <span class="stat-label">Scanned</span>
+          </div>
+          <div class="stat-item genuine">
+            <span class="stat-value" id="count-genuine">0</span>
+            <span class="stat-label">Likely Genuine</span>
+          </div>
+          <div class="stat-item deceptive">
+            <span class="stat-value" id="count-deceptive">0</span>
+            <span class="stat-label">Potentially Deceptive</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="setting-row">
+          <div>
+            <div class="setting-title">In-Page Highlights</div>
+            <div class="setting-desc">Highlight token attribution words</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-highlights" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p class="disclaimer">
+        RevuLens is an informational research tool using DistilBERT-SVM & SHAP. Does not assert legal authenticity.
+      </p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

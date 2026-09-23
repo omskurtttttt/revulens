@@ -1,0 +1,74 @@
+# Explicitly Excluded Thesis & Agent Context Files
+GEMINI.md
+.agents/
+skills-lock.json
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Datasets & Large Data Dumps
+data/
+datasets/
+*.csv
+*.tsv
+*.parquet
+*.jsonl
+
+# Model Binaries & Checkpoints (Hugging Face / Scikit-learn / PyTorch)
+models/*.pkl
+models/*.pt
+models/*.bin
+models/*.onnx
+models/*.safetensors
+*.h5
+*.joblib
+
+# Testing & Linting Caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Node / JS
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

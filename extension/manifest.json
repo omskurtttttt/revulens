@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "RevuLens",
+  "version": "0.1.0",
+  "description": "Explainable browser extension for detecting potentially deceptive e-commerce text reviews on Shopee Philippines using DistilBERT-SVM and SHAP.",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.shopee.ph/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "RevuLens Review Inspector"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.shopee.ph/*"
+      ],
+      "js": [
+        "content/shopee_parser.js"
+      ],
+      "css": [
+        "content/overlay.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

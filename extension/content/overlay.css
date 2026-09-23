@@ -1,0 +1,27 @@
+/**
+ * RevuLens In-Page Overlay Stylesheet (Scaffold)
+ * Full implementation scheduled in Phase 6.
+ */
+
+.revulens-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.revulens-badge-likely-genuine {
+  background-color: #e6f4ea;
+  color: #137333;
+  border: 1px solid #ceead6;
+}
+
+.revulens-badge-potentially-deceptive {
+  background-color: #fce8e6;
+  color: #c5221f;
+  border: 1px solid #fad2cf;
+}
