@@ -1,0 +1,29 @@
+name: RevuLens CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Run Unit Tests & Syntax Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Verify Python syntax and compile
+        run: |
+          python -m compileall backend tests
+
+      - name: Run unit tests
+        run: |
+          python -m unittest discover tests
