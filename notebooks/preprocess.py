@@ -1,12 +1,14 @@
 """
-RevuLens Dataset Preprocessing & Ingestion Pipeline.
+RevuLens Dataset Preprocessing & Splitting Pipeline (Step 1).
 
-Processes raw e-commerce review datasets:
-- Fake Reviews Dataset (Salminen et al., 2022): maps 'OR' -> 'Genuine', 'CG' -> 'Deceptive'
-- FiReCS / SentiTaglish (Cosme & De Leon, 2024): ingestion for localized Taglish vocabulary and robustness testing
-  (sentiment labels kept separate from authenticity labels per GEMINI.md)
-
-Outputs stratified train/val/test splits to data/processed/ (gitignored).
+Adheres strictly to GEMINI.md:
+1. One shared preprocessing function from backend.app.preprocessing (lowercase, remove punctuation/URLs/HTML, collapse whitespace, NO stop-word removal).
+2. Deduplication before splitting:
+   - Salminen: drops duplicate texts (~20 duplicates).
+   - FiReCS: drops duplicate texts and train/test overlaps.
+3. Salminen Stratified Split: 80/10/10 train/validation/test with fixed seed 42.
+4. FiReCS is NEVER used for training and NEVER labeled Genuine or Deceptive. Saved as an external exploratory check only.
+5. All outputs saved to data/processed/ (gitignored).
 """
 
 import os
@@ -21,24 +23,28 @@ from typing import Dict, List, Tuple, Any, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.app.services.preprocessor import ReviewPreprocessor
+from backend.app.preprocessing import normalize_text
 from backend.app.constants import InternalClass
 
+RANDOM_SEED = 42
 
-def load_raw_salminen_dataset(file_path: str) -> List[Dict[str, str]]:
+
+def load_and_deduplicate_salminen(file_path: str) -> Tuple[List[Dict[str, Any]], int]:
     """
-    Load and parse the Salminen et al. (2022) Fake Reviews Dataset.
-    Expected columns: category, rating, label ('OR' or 'CG'), text_
+    Load Salminen et al. (2022) Fake Reviews Dataset and deduplicate by normalized text.
+    Mapping: 'OR' -> Genuine, 'CG' -> Deceptive.
     """
-    records = []
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Salminen dataset file not found at: {file_path}")
+        raise FileNotFoundError(f"Salminen dataset file not found: {file_path}")
+
+    raw_records = []
+    seen_texts = set()
+    duplicate_count = 0
 
     with open(file_path, mode="r", encoding="utf-8", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
             raw_label = row.get("label", "").strip()
-            # Map labels: 'OR' (Original) -> Genuine, 'CG' (Computer-Generated) -> Deceptive
             if raw_label in ("OR", "Genuine", "1", "real", "genuine"):
                 internal_label = InternalClass.GENUINE.value
             elif raw_label in ("CG", "Deceptive", "0", "fake", "deceptive"):
@@ -46,78 +52,78 @@ def load_raw_salminen_dataset(file_path: str) -> List[Dict[str, str]]:
             else:
                 continue
 
-            text = row.get("text_", row.get("text", "")).strip()
-            if text:
-                records.append({
-                    "text": text,
-                    "label": internal_label,
-                    "category": row.get("category", "General"),
-                    "rating": row.get("rating", "")
-                })
+            raw_text = row.get("text_", row.get("text", "")).strip()
+            if not raw_text:
+                continue
 
-    return records
+            cleaned_text = normalize_text(raw_text)
+            if not cleaned_text:
+                continue
+
+            # Deduplication check
+            if cleaned_text in seen_texts:
+                duplicate_count += 1
+                continue
+
+            seen_texts.add(cleaned_text)
+            raw_records.append({
+                "text": raw_text,
+                "cleaned_text": cleaned_text,
+                "label": internal_label,
+                "category": row.get("category", "General"),
+                "rating": row.get("rating", "")
+            })
+
+    return raw_records, duplicate_count
 
 
-def load_raw_firecs_dataset(train_path: str, test_path: Optional[str] = None) -> List[Dict[str, str]]:
+def load_and_deduplicate_firecs(train_path: str, test_path: Optional[str] = None) -> Tuple[List[Dict[str, Any]], int]:
     """
-    Load the FiReCS / SentiTaglish dataset (Cosme & De Leon, 2024).
-    Contains authentic Filipino-English code-switched (Taglish) e-commerce reviews.
-    Per GEMINI.md, sentiment polarity is preserved as sentiment metadata, NOT authenticity labels.
+    Load FiReCS (Cosme & De Leon, 2024) dataset, normalize, and deduplicate across train/test files.
+    IMPORTANT (GEMINI.md): FiReCS is NEVER labeled Genuine or Deceptive.
+    It contains sentiment labels only and serves strictly as an external exploratory check.
     """
-    records = []
     paths = [p for p in (train_path, test_path) if p and os.path.exists(p)]
+    seen_texts = set()
+    records = []
+    duplicate_count = 0
 
     for p in paths:
         with open(p, mode="r", encoding="utf-8", errors="replace") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                text = row.get("review", row.get("text", "")).strip()
-                sentiment = row.get("label", "").strip()
-                if text:
-                    records.append({
-                        "text": text,
-                        "sentiment_label": sentiment,
-                        "source": "FiReCS_Taglish",
-                        "category": "E-Commerce-Taglish"
-                    })
+                raw_text = row.get("review", row.get("text", "")).strip()
+                if not raw_text:
+                    continue
 
-    return records
+                cleaned_text = normalize_text(raw_text)
+                if not cleaned_text:
+                    continue
 
+                if cleaned_text in seen_texts:
+                    duplicate_count += 1
+                    continue
 
-def generate_sample_dataset() -> List[Dict[str, str]]:
-    """
-    Generate a balanced representative sample dataset (English, Filipino, Taglish)
-    for development, testing, and pipeline validation when the raw datasets are absent.
-    """
-    samples = [
-        # Genuine English
-        {"text": "I bought this mouse two weeks ago. The click latency is low and battery lasts long. Highly recommend!", "label": InternalClass.GENUINE.value, "category": "Electronics"},
-        {"text": "The fabric is a bit thinner than expected, but for the price it's definitely reasonable. Fast delivery too.", "label": InternalClass.GENUINE.value, "category": "Clothing"},
-        {"text": "Arrived within 3 days in solid packaging. Tested and working as described.", "label": InternalClass.GENUINE.value, "category": "Home"},
-        # Deceptive English (template-like / repetitive / GPT-style)
-        {"text": "Best product ever bought in my entire life! Amazing! Buy it now everyone! Super super good!", "label": InternalClass.DECEPTIVE.value, "category": "Electronics"},
-        {"text": "This amazing item completely transformed my expectations. The incredible quality makes it superior to all alternatives.", "label": InternalClass.DECEPTIVE.value, "category": "Beauty"},
-        {"text": "Five stars five stars best seller best product fast shipment highly recommend to all consumers forever.", "label": InternalClass.DECEPTIVE.value, "category": "Home"},
-        # Genuine Taglish / Filipino
-        {"text": "Sobrang ganda ng packaging, may bubble wrap pa. Legit yung item at maayos kausap si seller. Salamat po!", "label": InternalClass.GENUINE.value, "category": "General"},
-        {"text": "Dumating kahapon yung order ko. Medyo matagal lang shipping pero worth it naman kasi gumagana lahat.", "label": InternalClass.GENUINE.value, "category": "Electronics"},
-        {"text": "Ayos yung tela, sakto ang fit sa akin. Order ulit ako sa susunod ibang kulay naman.", "label": InternalClass.GENUINE.value, "category": "Clothing"},
-        # Deceptive Taglish / Filipino
-        {"text": "Napakaganda napakaganda sobra ganda ganda bili na kayo legit na legit 1000 stars para kay seller!", "label": InternalClass.DECEPTIVE.value, "category": "General"},
-        {"text": "Maganda maganda maganda maganda maganda salamat salamat salamat seller ganda ganda ganda.", "label": InternalClass.DECEPTIVE.value, "category": "General"},
-        {"text": "The greatest item in the universe sobrang ganda talaga buy now best quality ever.", "label": InternalClass.DECEPTIVE.value, "category": "General"},
-    ]
-    return samples
+                seen_texts.add(cleaned_text)
+                records.append({
+                    "text": raw_text,
+                    "cleaned_text": cleaned_text,
+                    "sentiment_label": row.get("label", "").strip(),
+                    "source": "FiReCS_Taglish_Exploratory"
+                })
+
+    return records, duplicate_count
 
 
-def stratified_split(
+def stratified_split_80_10_10(
     records: List[Dict[str, Any]],
-    val_ratio: float = 0.15,
-    test_ratio: float = 0.15,
-    random_state: int = 42
+    val_ratio: float = 0.10,
+    test_ratio: float = 0.10,
+    random_state: int = RANDOM_SEED
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
-    Split records into train, validation, and test sets with stratified class balance.
+    Stratified 80/10/10 train/validation/test split on Salminen with fixed seed 42.
+    Guarantees equal class distribution (Genuine / Deceptive) across all splits.
     """
     random.seed(random_state)
     genuine = [r for r in records if r["label"] == InternalClass.GENUINE.value]
@@ -128,12 +134,8 @@ def stratified_split(
 
     def split_group(group):
         n = len(group)
-        if n >= 3:
-            n_test = max(1, int(n * test_ratio))
-            n_val = max(1, int(n * val_ratio))
-        else:
-            n_test = int(n * test_ratio)
-            n_val = int(n * val_ratio)
+        n_test = max(1, int(n * test_ratio)) if n >= 10 else int(n * test_ratio)
+        n_val = max(1, int(n * val_ratio)) if n >= 10 else int(n * val_ratio)
         test = group[:n_test]
         val = group[n_test:n_test + n_val]
         train = group[n_test + n_val:]
@@ -153,13 +155,9 @@ def stratified_split(
     return train, val, test
 
 
-def save_split_csv(records: List[Dict[str, Any]], file_path: str, extra_fields: Optional[List[str]] = None) -> None:
-    """Save records to a CSV file."""
+def save_csv(records: List[Dict[str, Any]], file_path: str, fieldnames: List[str]) -> None:
+    """Save records to CSV."""
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    fieldnames = ["text", "cleaned_text", "label", "language_hint", "char_count", "category"]
-    if extra_fields:
-        fieldnames.extend(extra_fields)
-
     with open(file_path, mode="w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -167,122 +165,84 @@ def save_split_csv(records: List[Dict[str, Any]], file_path: str, extra_fields: 
 
 
 def run_pipeline(
-    raw_csv_path: Optional[str] = None,
+    raw_salminen_path: Optional[str] = None,
     firecs_train_path: Optional[str] = None,
     firecs_test_path: Optional[str] = None,
     output_dir: str = "data/processed",
-    val_ratio: float = 0.15,
-    test_ratio: float = 0.15,
-    random_state: int = 42
+    random_state: int = RANDOM_SEED
 ) -> Dict[str, Any]:
     """
-    Run data ingestion, preprocessing, and stratified splitting for Salminen and FiReCS datasets.
+    Execute full data preparation pipeline per GEMINI.md.
     """
-    preprocessor = ReviewPreprocessor()
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Auto-detect default raw dataset paths if not provided
+    # Locate raw paths
     default_salminen = PROJECT_ROOT / "data" / "raw" / "fake reviews dataset.csv"
     default_firecs_train = PROJECT_ROOT / "data" / "raw" / "FiReCS_train_set.csv"
     default_firecs_test = PROJECT_ROOT / "data" / "raw" / "FiReCS_test_set.csv"
 
-    if not raw_csv_path and default_salminen.exists():
-        raw_csv_path = str(default_salminen)
+    if not raw_salminen_path and default_salminen.exists():
+        raw_salminen_path = str(default_salminen)
     if not firecs_train_path and default_firecs_train.exists():
         firecs_train_path = str(default_firecs_train)
     if not firecs_test_path and default_firecs_test.exists():
         firecs_test_path = str(default_firecs_test)
 
-    # 1. Process Authenticity Labeled Dataset (Salminen et al.)
-    if raw_csv_path and os.path.exists(raw_csv_path):
-        print(f"Loading Salminen et al. dataset from: {raw_csv_path}")
-        raw_records = load_raw_salminen_dataset(raw_csv_path)
+    # 1. Process Salminen (Training & Evaluation Dataset)
+    if raw_salminen_path and os.path.exists(raw_salminen_path):
+        print(f"Loading and deduplicating Salminen dataset: {raw_salminen_path}")
+        salminen_records, salminen_dupes = load_and_deduplicate_salminen(raw_salminen_path)
+        print(f"Salminen deduplication: dropped {salminen_dupes} duplicate rows.")
+        print(f"Remaining unique Salminen records: {len(salminen_records)}")
     else:
-        print("No raw authenticity dataset found. Using representative sample dataset.")
-        raw_records = generate_sample_dataset()
+        raise FileNotFoundError(f"Salminen dataset not found at: {raw_salminen_path}")
 
-    print(f"Total raw authenticity records: {len(raw_records)}")
+    # Stratified 80/10/10 split
+    train, val, test = stratified_split_80_10_10(salminen_records, val_ratio=0.10, test_ratio=0.10, random_state=random_state)
 
-    # Clean and filter
-    processed_records = []
-    skipped_count = 0
+    salminen_fields = ["text", "cleaned_text", "label", "category", "rating"]
+    save_csv(train, str(output_path / "train.csv"), salminen_fields)
+    save_csv(val, str(output_path / "val.csv"), salminen_fields)
+    save_csv(test, str(output_path / "test.csv"), salminen_fields)
 
-    for r in raw_records:
-        meta = preprocessor.process(r["text"])
-        if meta["is_valid"]:
-            processed_records.append({
-                "text": r["text"],
-                "cleaned_text": meta["cleaned_text"],
-                "label": r["label"],
-                "language_hint": meta["language_hint"],
-                "char_count": meta["char_count"],
-                "category": r.get("category", "General"),
-            })
-        else:
-            skipped_count += 1
-
-    print(f"Valid authenticity records: {len(processed_records)} (skipped: {skipped_count})")
-
-    # Stratified split
-    train, val, test = stratified_split(
-        processed_records,
-        val_ratio=val_ratio,
-        test_ratio=test_ratio,
-        random_state=random_state
-    )
-
-    save_split_csv(train, str(output_path / "train.csv"))
-    save_split_csv(val, str(output_path / "val.csv"))
-    save_split_csv(test, str(output_path / "test.csv"))
-
-    # 2. Process FiReCS / SentiTaglish (Localized Taglish Reference Dataset)
-    firecs_count = 0
+    # 2. Process FiReCS (External Exploratory Dataset ONLY)
+    firecs_records = []
+    firecs_dupes = 0
     if firecs_train_path and os.path.exists(firecs_train_path):
-        print(f"Loading FiReCS Taglish dataset from: {firecs_train_path}")
-        raw_firecs = load_raw_firecs_dataset(firecs_train_path, firecs_test_path)
-        processed_firecs = []
-        for r in raw_firecs:
-            meta = preprocessor.process(r["text"])
-            if meta["is_valid"]:
-                processed_firecs.append({
-                    "text": r["text"],
-                    "cleaned_text": meta["cleaned_text"],
-                    "label": "Taglish_Reference",
-                    "sentiment_label": r["sentiment_label"],
-                    "language_hint": meta["language_hint"],
-                    "char_count": meta["char_count"],
-                    "category": r["category"]
-                })
-        firecs_count = len(processed_firecs)
-        save_split_csv(processed_firecs, str(output_path / "firecs_taglish_reference.csv"), extra_fields=["sentiment_label"])
-        print(f"FiReCS Taglish reference records saved: {firecs_count}")
+        print(f"\nLoading and deduplicating FiReCS Taglish dataset: {firecs_train_path}")
+        firecs_records, firecs_dupes = load_and_deduplicate_firecs(firecs_train_path, firecs_test_path)
+        print(f"FiReCS deduplication: dropped {firecs_dupes} duplicate / overlapping rows.")
+        print(f"Remaining unique FiReCS records: {len(firecs_records)}")
 
-    # Compute summary statistics
-    def get_stats(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
-        genuine_count = sum(1 for r in subset if r["label"] == InternalClass.GENUINE.value)
-        deceptive_count = sum(1 for r in subset if r["label"] == InternalClass.DECEPTIVE.value)
-        avg_len = sum(r["char_count"] for r in subset) / max(len(subset), 1)
-        lang_counts = {}
-        for r in subset:
-            l = r["language_hint"]
-            lang_counts[l] = lang_counts.get(l, 0) + 1
+        firecs_fields = ["text", "cleaned_text", "sentiment_label", "source"]
+        save_csv(firecs_records, str(output_path / "firecs_exploratory.csv"), firecs_fields)
+
+    # Summary statistics
+    def get_split_stats(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+        g = sum(1 for r in subset if r["label"] == InternalClass.GENUINE.value)
+        d = sum(1 for r in subset if r["label"] == InternalClass.DECEPTIVE.value)
+        avg_len = sum(len(r["cleaned_text"].split()) for r in subset) / max(len(subset), 1)
         return {
             "total": len(subset),
-            "genuine": genuine_count,
-            "deceptive": deceptive_count,
-            "avg_char_length": round(avg_len, 2),
-            "language_distribution": lang_counts
+            "genuine": g,
+            "deceptive": d,
+            "genuine_pct": round(g / max(len(subset), 1) * 100, 2),
+            "deceptive_pct": round(d / max(len(subset), 1) * 100, 2),
+            "avg_word_count": round(avg_len, 2)
         }
 
     metadata = {
-        "total_authenticity_processed": len(processed_records),
-        "total_authenticity_skipped": skipped_count,
-        "firecs_taglish_reference_count": firecs_count,
+        "dataset_rules_version": "GEMINI.md (80/10/10 split, fixed seed 42)",
+        "salminen_total_unique": len(salminen_records),
+        "salminen_duplicates_dropped": salminen_dupes,
+        "firecs_total_unique": len(firecs_records),
+        "firecs_duplicates_dropped": firecs_dupes,
+        "firecs_role": "External exploratory check only (never used in training, no authenticity label)",
         "splits": {
-            "train": get_stats(train),
-            "val": get_stats(val),
-            "test": get_stats(test)
+            "train": get_split_stats(train),
+            "val": get_split_stats(val),
+            "test": get_split_stats(test)
         }
     }
 
@@ -290,15 +250,14 @@ def run_pipeline(
         json.dump(metadata, f, indent=2)
 
     print(f"\nPipeline successfully completed! Splits saved to {output_dir}:")
-    print(f"  Train: {len(train)} records")
-    print(f"  Val:   {len(val)} records")
-    print(f"  Test:  {len(test)} records")
-    if firecs_count:
-        print(f"  FiReCS Taglish reference: {firecs_count} records")
+    print(f"  Train: {len(train)} records ({metadata['splits']['train']['genuine']} Genuine, {metadata['splits']['train']['deceptive']} Deceptive)")
+    print(f"  Val:   {len(val)} records ({metadata['splits']['val']['genuine']} Genuine, {metadata['splits']['val']['deceptive']} Deceptive)")
+    print(f"  Test:  {len(test)} records ({metadata['splits']['test']['genuine']} Genuine, {metadata['splits']['test']['deceptive']} Deceptive)")
+    if firecs_records:
+        print(f"  FiReCS Exploratory: {len(firecs_records)} unique Taglish records (unlabeled for authenticity)")
 
     return metadata
 
 
 if __name__ == "__main__":
-    salminen = sys.argv[1] if len(sys.argv) > 1 else None
-    run_pipeline(raw_csv_path=salminen)
+    run_pipeline()

@@ -38,12 +38,14 @@ ENV/
 env/
 
 # Datasets & Large Data Dumps
-data/
+data/*
+!data/README.md
 datasets/
 *.csv
 *.tsv
 *.parquet
 *.jsonl
+*.npy
 
 # Model Binaries & Checkpoints (Hugging Face / Scikit-learn / PyTorch)
 models/*.pkl
