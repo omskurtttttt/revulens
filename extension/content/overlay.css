@@ -1,27 +1,409 @@
 /**
- * RevuLens In-Page Overlay Stylesheet (Scaffold)
- * Full implementation scheduled in Phase 6.
+ * RevuLens Floating Overlay & Inspection Stylesheet.
+ *
+ * Scoped under .revulens-ui to prevent host site CSS leaks.
+ * High z-index ensures visibility on Shopee PH, Lazada, Amazon, and other platforms.
  */
 
-.revulens-badge {
+/* ---------------------------------------------------------
+   Trigger Button (Appears near user selection)
+   --------------------------------------------------------- */
+.revulens-trigger-btn {
+  position: absolute;
+  z-index: 2147483646;
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #1e293b;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
   font-weight: 600;
-  padding: 2px 8px;
+  line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  animation: revulens-fade-in 0.15s ease-out;
+}
+
+.revulens-trigger-btn:hover {
+  background: #0f172a;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.revulens-trigger-btn:active {
+  transform: translateY(0);
+}
+
+.revulens-logo-dot {
+  width: 8px;
+  height: 8px;
+  background: #38bdf8;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px #38bdf8;
+}
+
+/* ---------------------------------------------------------
+   Inspection Card (Modal Tooltip)
+   --------------------------------------------------------- */
+.revulens-inspect-card {
+  position: absolute;
+  z-index: 2147483647;
+  width: 360px;
+  max-width: 90vw;
+  background: #ffffff;
+  color: #1e293b;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  animation: revulens-card-enter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.revulens-inspect-card * {
+  box-sizing: border-box;
+}
+
+/* Header */
+.revulens-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #f1f5f9;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+.revulens-card-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.revulens-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: #0284c7;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 6px;
+  letter-spacing: -0.5px;
+}
+
+.revulens-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.revulens-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+  padding: 2px 6px;
   border-radius: 4px;
-  margin-left: 8px;
-  vertical-align: middle;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.revulens-badge-likely-genuine {
-  background-color: #e6f4ea;
-  color: #137333;
-  border: 1px solid #ceead6;
+.revulens-close-btn:hover {
+  color: #0f172a;
+  background: #e2e8f0;
 }
 
-.revulens-badge-potentially-deceptive {
-  background-color: #fce8e6;
-  color: #c5221f;
-  border: 1px solid #fad2cf;
+/* Card Body */
+.revulens-card-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.revulens-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.revulens-label-name {
+  font-weight: 600;
+  color: #475569;
+  font-size: 12px;
+}
+
+/* Status Badges */
+.revulens-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  letter-spacing: 0.1px;
+}
+
+.badge-genuine {
+  background-color: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.badge-deceptive {
+  background-color: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.revulens-badge-loading {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.revulens-badge-error {
+  background-color: #fff1f2;
+  color: #be123c;
+  border: 1px solid #fecdd3;
+  font-size: 11px;
+}
+
+/* Confidence Bar */
+.revulens-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.revulens-meta-label {
+  color: #64748b;
+  font-weight: 600;
+  min-width: 65px;
+}
+
+.revulens-confidence-track {
+  flex: 1;
+  height: 6px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.revulens-confidence-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fill-genuine {
+  background: #22c55e;
+}
+
+.fill-deceptive {
+  background: #ef4444;
+}
+
+.revulens-meta-val {
+  font-weight: 700;
+  color: #1e293b;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* SHAP Section */
+.revulens-shap-section {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.revulens-shap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.revulens-shap-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+}
+
+.revulens-shap-loading {
+  font-size: 10px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.revulens-shap-ready {
+  font-size: 10px;
+  color: #0284c7;
+  font-weight: 600;
+}
+
+/* Legend */
+.revulens-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.revulens-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.revulens-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.dot-deceptive {
+  background: #ef4444;
+}
+
+.dot-genuine {
+  background: #22c55e;
+}
+
+/* Token Cloud */
+.revulens-token-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.revulens-token-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  line-height: 1.3;
+  cursor: help;
+  transition: transform 0.1s ease;
+}
+
+.revulens-token-chip:hover {
+  transform: scale(1.06);
+}
+
+.token-deceptive {
+  background-color: rgba(239, 68, 68, 0.22);
+  color: #991b1b;
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  font-weight: 600;
+}
+
+.token-genuine {
+  background-color: rgba(34, 197, 94, 0.22);
+  color: #166534;
+  border: 1px solid rgba(22, 163, 74, 0.5);
+  font-weight: 600;
+}
+
+.token-neutral {
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.revulens-placeholder-text {
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 4px 0;
+  font-style: italic;
+}
+
+.revulens-error-text {
+  font-size: 11px;
+  color: #e11d48;
+  margin: 4px 0;
+}
+
+/* Footer & Disclaimer */
+.revulens-card-footer {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.revulens-disclaimer {
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.35;
+  margin: 0;
+}
+
+/* Spinner */
+.revulens-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #0284c7;
+  border-radius: 50%;
+  display: inline-block;
+  animation: revulens-spin 0.6s linear infinite;
+}
+
+@keyframes revulens-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes revulens-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes revulens-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
