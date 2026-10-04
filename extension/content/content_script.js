@@ -55,12 +55,22 @@
 
   // Close card when clicking outside
   document.addEventListener("mousedown", (e) => {
+    if (e.target && e.target.closest && e.target.closest(".revulens-ui")) {
+      return;
+    }
     if (activeCard && !activeCard.contains(e.target) && (!activeTriggerBtn || !activeTriggerBtn.contains(e.target))) {
       cleanupAll();
+    } else if (activeTriggerBtn && !activeTriggerBtn.contains(e.target)) {
+      removeTriggerBtn();
     }
   });
 
-  function handleSelectionChange() {
+  function handleSelectionChange(e) {
+    // If the event target is inside RevuLens UI, ignore completely to avoid destroying trigger
+    if (e && e.target && (e.target.closest && e.target.closest(".revulens-ui") || activeTriggerBtn && activeTriggerBtn.contains(e.target))) {
+      return;
+    }
+
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) {
       if (activeTriggerBtn && !activeCard) {
@@ -110,6 +120,16 @@
 
     btn.style.top = `${Math.max(window.scrollY + 5, top)}px`;
     btn.style.left = `${Math.max(window.scrollX + 5, left)}px`;
+
+    // CRITICAL: Prevent mousedown from collapsing the text selection in the host page
+    btn.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    btn.addEventListener("mouseup", (e) => {
+      e.stopPropagation();
+    });
 
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -217,6 +237,11 @@
     card.querySelector(".revulens-close-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       cleanupAll();
+    });
+
+    // Prevent clicks inside the card from propagating to document dismiss handler
+    card.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
     });
 
     document.body.appendChild(card);

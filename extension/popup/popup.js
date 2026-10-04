@@ -42,6 +42,24 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function checkBackendHealth(container, label) {
+  // First attempt via background service worker
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+    chrome.runtime.sendMessage({ action: "CHECK_HEALTH" }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        fallbackDirectHealthCheck(container, label);
+      } else {
+        const data = response.data;
+        container.className = "status-indicator online";
+        label.textContent = "Online";
+        label.title = `Device: ${(data.device || "CPU").toUpperCase()} | Model Ready`;
+      }
+    });
+    return;
+  }
+  fallbackDirectHealthCheck(container, label);
+}
+
+async function fallbackDirectHealthCheck(container, label) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
@@ -55,7 +73,7 @@ async function checkBackendHealth(container, label) {
       const data = await res.json();
       container.className = "status-indicator online";
       label.textContent = "Online";
-      label.title = `Device: ${data.device.toUpperCase()} | Model Ready`;
+      label.title = `Device: ${(data.device || "CPU").toUpperCase()} | Model Ready`;
     } else {
       container.className = "status-indicator offline";
       label.textContent = "Error";
@@ -63,6 +81,6 @@ async function checkBackendHealth(container, label) {
   } catch (err) {
     container.className = "status-indicator offline";
     label.textContent = "Offline";
-    label.title = "Ensure FastAPI backend is running (python -m uvicorn backend.app.main:app)";
+    label.title = "Ensure FastAPI backend is running: uvicorn backend.app.main:app --port 8000";
   }
 }
