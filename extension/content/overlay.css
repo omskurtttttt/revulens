@@ -9,7 +9,7 @@
    Trigger Button (Appears near user selection)
    --------------------------------------------------------- */
 .revulens-trigger-btn {
-  position: absolute;
+  position: fixed;
   z-index: 2147483646;
   display: inline-flex;
   align-items: center;
@@ -53,7 +53,7 @@
    Inspection Card (Modal Tooltip)
    --------------------------------------------------------- */
 .revulens-inspect-card {
-  position: absolute;
+  position: fixed;
   z-index: 2147483647;
   width: 360px;
   max-width: 90vw;

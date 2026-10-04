@@ -115,11 +115,12 @@
     btn.innerHTML = `<span class="revulens-logo-dot"></span> Inspect with RevuLens`;
     btn.title = "Inspect selected review for deceptive patterns";
 
-    const top = window.scrollY + rect.top - 38;
-    const left = window.scrollX + rect.left + Math.max(0, (rect.width - 150) / 2);
+    // Viewport-relative coordinates (fixed positioning)
+    const top = Math.max(10, rect.top - 42);
+    const left = Math.max(10, Math.min(rect.left + Math.max(0, (rect.width - 160) / 2), window.innerWidth - 180));
 
-    btn.style.top = `${Math.max(window.scrollY + 5, top)}px`;
-    btn.style.left = `${Math.max(window.scrollX + 5, left)}px`;
+    btn.style.top = `${top}px`;
+    btn.style.left = `${left}px`;
 
     // CRITICAL: Prevent mousedown from collapsing the text selection in the host page
     btn.addEventListener("mousedown", (e) => {
@@ -180,15 +181,15 @@
     const card = document.createElement("div");
     card.className = "revulens-ui revulens-inspect-card";
 
-    // Card Position
-    const top = window.scrollY + rect.bottom + 8;
-    const left = Math.min(
-      window.scrollX + rect.left,
-      window.innerWidth + window.scrollX - 380
-    );
+    // Viewport-relative coordinates (fixed positioning)
+    let top = rect.bottom + 8;
+    if (top + 340 > window.innerHeight) {
+      top = Math.max(10, rect.top - 350);
+    }
+    const left = Math.max(10, Math.min(rect.left, window.innerWidth - 380));
 
     card.style.top = `${top}px`;
-    card.style.left = `${Math.max(window.scrollX + 10, left)}px`;
+    card.style.left = `${left}px`;
 
     card.innerHTML = `
       <div class="revulens-card-header">
