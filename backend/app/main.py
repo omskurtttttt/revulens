@@ -12,10 +12,12 @@ Adheres strictly to GEMINI.md:
 
 import time
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -225,3 +227,13 @@ async def explain_review(request: Request, payload: ExplainRequest) -> ExplainRe
     except Exception as e:
         logger.error(f"Explanation error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Explanation failed: {str(e)}")
+
+
+@app.get("/demo", tags=["Testing"])
+async def get_demo_page():
+    """Serve local interactive review demo test page."""
+    demo_path = "demo.html"
+    if os.path.exists(demo_path):
+        return FileResponse(demo_path)
+    raise HTTPException(status_code=404, detail="demo.html not found")
+

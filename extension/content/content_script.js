@@ -127,15 +127,19 @@
       e.stopPropagation();
     });
 
-    btn.addEventListener("mouseup", (e) => {
-      e.stopPropagation();
-    });
-
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    let triggered = false;
+    const handleTrigger = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      if (triggered) return;
+      triggered = true;
       openInspectionCard(rect, currentSelectionText);
-    });
+    };
+
+    btn.addEventListener("mouseup", handleTrigger);
+    btn.addEventListener("click", handleTrigger);
 
     document.body.appendChild(btn);
     activeTriggerBtn = btn;
@@ -260,64 +264,79 @@
     const tokenCloud = card.querySelector("#revulens-token-cloud");
 
     // 1. FAST CLASSIFICATION CALL (via Service Worker)
-    chrome.runtime.sendMessage(
-      {
-        action: "CLASSIFY_TEXT",
-        payload: { text },
-      },
-      (response) => {
-        if (!card.parentElement) return; // Closed before response
+    try {
+      chrome.runtime.sendMessage(
+        {
+          action: "CLASSIFY_TEXT",
+          payload: { text },
+        },
+        (response) => {
+          if (!card.parentElement) return; // Closed before response
 
-        if (!response || !response.success) {
-          const errMsg = (response && response.error) || "Could not reach backend service.";
-          badgeEl.className = "revulens-status-badge revulens-badge-error";
-          badgeEl.textContent = "Offline / Connection Error";
-          badgeEl.title = errMsg;
-          shapStatus.textContent = "Backend offline";
-          return;
+          if (chrome.runtime.lastError || !response || !response.success) {
+            const errMsg = (response && response.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "Could not reach backend service.";
+            badgeEl.className = "revulens-status-badge revulens-badge-error";
+            badgeEl.textContent = "Connection Error (Refresh Tab F5)";
+            badgeEl.title = errMsg;
+            shapStatus.textContent = "Backend offline or tab needs refresh";
+            return;
+          }
+
+          const { label, display_label, confidence } = response.data;
+          const isDeceptive = label === "Deceptive";
+
+          badgeEl.className = `revulens-status-badge ${isDeceptive ? "badge-deceptive" : "badge-genuine"}`;
+          badgeEl.textContent = display_label;
+
+          // Display confidence percentage
+          const pct = Math.round(confidence * 100);
+          confContainer.style.display = "flex";
+          confBar.style.width = `${pct}%`;
+          confBar.className = `revulens-confidence-fill ${isDeceptive ? "fill-deceptive" : "fill-genuine"}`;
+          confPct.textContent = `${pct}%`;
         }
-
-        const { label, display_label, confidence } = response.data;
-        const isDeceptive = label === "Deceptive";
-
-        badgeEl.className = `revulens-status-badge ${isDeceptive ? "badge-deceptive" : "badge-genuine"}`;
-        badgeEl.textContent = display_label;
-
-        // Display confidence percentage
-        const pct = Math.round(confidence * 100);
-        confContainer.style.display = "flex";
-        confBar.style.width = `${pct}%`;
-        confBar.className = `revulens-confidence-fill ${isDeceptive ? "fill-deceptive" : "fill-genuine"}`;
-        confPct.textContent = `${pct}%`;
+      );
+    } catch (err) {
+      if (badgeEl) {
+        badgeEl.className = "revulens-status-badge revulens-badge-error";
+        badgeEl.textContent = "Please refresh tab (F5)";
+        badgeEl.title = err.message || "Extension context was updated.";
       }
-    );
+    }
 
     // 2. ASYNCHRONOUS EXPLANATION CALL (via Service Worker)
-    chrome.runtime.sendMessage(
-      {
-        action: "EXPLAIN_TEXT",
-        payload: {
-          text,
-          max_evals: CONFIG.SETTINGS.DEFAULT_MAX_EVALS,
+    try {
+      chrome.runtime.sendMessage(
+        {
+          action: "EXPLAIN_TEXT",
+          payload: {
+            text,
+            max_evals: CONFIG.SETTINGS.DEFAULT_MAX_EVALS,
+          },
         },
-      },
-      (response) => {
-        if (!card.parentElement) return;
+        (response) => {
+          if (!card.parentElement) return;
 
-        if (!response || !response.success) {
-          shapStatus.textContent = "Attribution unavailable";
-          tokenCloud.innerHTML = `<p class="revulens-error-text">Could not compute word contributions: ${response ? response.error : "timeout"}</p>`;
-          return;
+          if (chrome.runtime.lastError || !response || !response.success) {
+            shapStatus.textContent = "Attribution unavailable";
+            const errMsg = (response && response.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "timeout";
+            tokenCloud.innerHTML = `<p class="revulens-error-text">Could not compute word contributions: ${errMsg}</p>`;
+            return;
+          }
+
+          const { tokens, base_value, latency_ms, cached } = response.data;
+          shapStatus.textContent = `Ready (${tokens.length} tokens, ${latency_ms ? latency_ms.toFixed(0) : 0}ms${cached ? " - cached" : ""})`;
+          shapStatus.className = "revulens-shap-ready";
+
+          renderTokenCloud(tokens, tokenCloud);
+          applyInlineWordHighlights(tokens);
         }
-
-        const { tokens, base_value, latency_ms, cached } = response.data;
-        shapStatus.textContent = `Ready (${tokens.length} tokens, ${latency_ms ? latency_ms.toFixed(0) : 0}ms${cached ? " - cached" : ""})`;
-        shapStatus.className = "revulens-shap-ready";
-
-        renderTokenCloud(tokens, tokenCloud);
-        applyInlineWordHighlights(tokens);
+      );
+    } catch (err) {
+      if (shapStatus) {
+        shapStatus.textContent = "Refresh tab to reload extension";
       }
-    );
+    }
   }
 
   function renderTokenCloud(tokens, container) {
