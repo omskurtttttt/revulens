@@ -44,8 +44,8 @@ class TestHybridSVMPipeline(unittest.TestCase):
         self.assertEqual(scaler.mean_.shape, (768,))
         self.assertEqual(scaler.scale_.shape, (768,))
 
-    def test_calibrated_probabilities_and_predictions(self):
-        """Verify calibrated probability outputs sum to 1.0 and predictions are binary."""
+    def test_decision_function_and_predictions(self):
+        """Verify decision function outputs continuous scores and predictions are binary matching sign per GEMINI.md."""
         if not self.has_artifact:
             self.skipTest("Hybrid pipeline artifact not yet trained on disk")
 
@@ -57,14 +57,14 @@ class TestHybridSVMPipeline(unittest.TestCase):
         dummy_embeddings = rng.randn(4, 768).astype(np.float32)
 
         X_scaled = scaler.transform(dummy_embeddings)
-        proba = classifier.predict_proba(X_scaled)
+        scores = classifier.decision_function(X_scaled)
         preds = classifier.predict(X_scaled)
 
-        self.assertEqual(proba.shape, (4, 2))
-        np.testing.assert_allclose(np.sum(proba, axis=1), [1.0, 1.0, 1.0, 1.0], atol=1e-5)
-
-        for p in preds:
+        self.assertEqual(scores.shape, (4,))
+        for s, p in zip(scores, preds):
             self.assertIn(p, (0, 1))
+            expected = 1 if s > 0 else 0
+            self.assertEqual(p, expected)
 
     def test_evaluate_predictions_function(self):
         """Verify evaluation metric calculations."""

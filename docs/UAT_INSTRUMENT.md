@@ -107,7 +107,7 @@ Participants evaluate each statement on a 5-point Likert scale with interpretati
 ## 6. Strict Separation of Concerns & Research Integrity (Thesis Rule)
 
 Per `GEMINI.md`:
-- **Model Performance Metrics** evaluate algorithmic detection capacity for the hybrid and baseline models on the held-out Salminen test split (reported from saved evaluation files in `data/processed/final_test_evaluation.json`).
+- **Model Performance Metrics** evaluate algorithmic detection capacity for the hybrid and baseline models on the held-out Salminen test split and validation pooling comparison (reported from saved evaluation files in `data/processed/model_evaluation_results.json` and `data/processed/final_test_evaluation.json`).
 - **System Quality & UX Metrics** evaluate software interaction capability and user acceptance (reported from participant survey CSV data in `data/uat_responses.csv`).
 - **Research Integrity Rule:** Evaluation figures must never be fabricated, simulated, or typed in by hand. Real evaluation outputs must populate the thesis tables directly.
 - These two evaluation domains are **strictly non-interchangeable** and are reported in distinct sections of Thesis Chapter 4.

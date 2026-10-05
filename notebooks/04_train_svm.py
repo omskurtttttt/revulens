@@ -1,16 +1,16 @@
 """
-Step 4: SVM Classifier Training, Hyperparameter Tuning & Calibration.
+Step 4: DistilBERT-SVM Hybrid Pipeline Training, Tuning & Validation Pooling Comparison.
 
 Adheres strictly to GEMINI.md:
-- Classifier: SVM on DistilBERT frozen embeddings
-- Default model: LinearSVC
-- Feature standardization: StandardScaler fit on TRAIN ONLY
-- Hyperparameter tuning: C parameter tuned on validation set
-- Probability calibration: CalibratedClassifierCV for confidence scores
-- Pooling comparison: Supports both mean pooling (default) and CLS token pooling
-- Saves pipeline artifact: backend/models/hybrid_distilbert_svm_pipeline.joblib (gitignored)
-- Saves validation metrics: data/processed/hybrid_val_metrics.json (gitignored)
-- Reports hybrid vs baseline comparison (hybrid is NOT assumed to be better)
+- Encoder: distilbert-base-multilingual-cased (frozen, never fine-tuned).
+- Feature standardization: StandardScaler fit on TRAIN ONLY.
+- Classifier: LinearSVC with C parameter tuned on validation set.
+- Decision rule: The sign of decision_function decides the class.
+- NO confidence score anywhere (no CalibratedClassifierCV, no predict_proba).
+- Pooling comparison: Evaluates both Mean pooling (default) and CLS token pooling on the validation set.
+- Saves pipeline artifact: backend/models/hybrid_distilbert_svm_pipeline.joblib (gitignored).
+- Saves validation metrics: data/processed/hybrid_val_metrics.json (gitignored).
+- Reports hybrid vs baseline comparison (hybrid is NOT assumed to be better).
 """
 
 import os
@@ -26,7 +26,6 @@ import numpy as np
 import sklearn
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -47,9 +46,7 @@ def load_split_embeddings(
     pooling: str = "mean",
     data_dir: str = "data/processed"
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Load pre-extracted embeddings and label arrays for a split.
-    """
+    """Load pre-extracted embeddings and label arrays for a split."""
     data_path = Path(data_dir)
     emb_file = data_path / f"{split_name}_embeddings_{pooling}.npy"
     lbl_file = data_path / f"{split_name}_labels.npy"
@@ -68,8 +65,8 @@ def load_split_embeddings(
     return embeddings, labels
 
 
-def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray = None) -> Dict[str, Any]:
-    """Calculate standard classification evaluation metrics."""
+def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray, y_proba: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    """Calculate standard classification evaluation metrics (no confidence scores in production)."""
     acc = accuracy_score(y_true, y_pred)
     prec_binary = precision_score(y_true, y_pred, pos_label=1, zero_division=0)
     rec_binary = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
@@ -81,12 +78,7 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.nda
 
     cm = confusion_matrix(y_true, y_pred).tolist()
 
-    avg_conf = None
-    if y_proba is not None:
-        pred_confidences = np.max(y_proba, axis=1)
-        avg_conf = float(np.mean(pred_confidences))
-
-    return {
+    metrics: Dict[str, Any] = {
         "accuracy": round(float(acc), 4),
         "precision_deceptive": round(float(prec_binary), 4),
         "recall_deceptive": round(float(rec_binary), 4),
@@ -95,11 +87,16 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.nda
         "recall_macro": round(float(rec_macro), 4),
         "f1_macro": round(float(f1_macro), 4),
         "confusion_matrix": cm,
-        "average_confidence": round(avg_conf, 4) if avg_conf is not None else None,
     }
 
+    if y_proba is not None:
+        pred_confidences = np.max(y_proba, axis=1)
+        metrics["average_confidence"] = round(float(np.mean(pred_confidences)), 4)
 
-def train_and_tune_hybrid_svm(
+    return metrics
+
+
+def train_and_tune_linear_svc(
     X_train: np.ndarray,
     y_train: np.ndarray,
     X_val: np.ndarray,
@@ -108,8 +105,8 @@ def train_and_tune_hybrid_svm(
     pooling_name: str = "mean"
 ) -> Dict[str, Any]:
     """
-    Standardize features (fit on train only), tune LinearSVC C on validation set,
-    and calibrate with CalibratedClassifierCV.
+    Standardize features (fit on train only per GEMINI.md) and tune LinearSVC C on validation set.
+    Predictions are determined by the sign of decision_function (no calibration).
     """
     print(f"\n=======================================================")
     print(f"Training DistilBERT-SVM Pipeline (pooling={pooling_name})")
@@ -118,14 +115,14 @@ def train_and_tune_hybrid_svm(
     print(f"=======================================================")
 
     # 1. Feature Standardization (FIT ON TRAIN ONLY per GEMINI.md)
-    print("\n[1/4] Standardizing feature embeddings (StandardScaler fit on TRAIN only)...")
+    print("\n[1/3] Standardizing feature embeddings (StandardScaler fit on TRAIN only)...")
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled = scaler.transform(X_val)
 
     # 2. Hyperparameter Tuning on Validation Split
-    print("\n[2/4] Tuning LinearSVC regularization parameter 'C' on Validation Set...")
-    tuning_history = {}
+    print("\n[2/3] Tuning LinearSVC regularization parameter 'C' on Validation Set...")
+    tuning_history: Dict[float, Dict[str, float]] = {}
     best_c = c_candidates[0]
     best_f1 = -1.0
 
@@ -147,40 +144,25 @@ def train_and_tune_hybrid_svm(
             best_f1 = val_f1
             best_c = c
 
-    print(f"Optimal C selected: {best_c} (Validation F1 Macro: {best_f1:.4f})")
+    print(f"Optimal C selected for {pooling_name.upper()} pooling: {best_c} (Validation Macro F1: {best_f1:.4f})")
 
-    # 3. Fit Raw Best SVC
+    # 3. Fit Best SVC (Uncalibrated LinearSVC per GEMINI.md)
+    print("\n[3/3] Fitting final LinearSVC model on standardized train embeddings...")
     best_svc = LinearSVC(C=best_c, random_state=RANDOM_SEED, max_iter=3000, dual="auto")
     best_svc.fit(X_train_scaled, y_train)
 
-    # 4. Wrap with CalibratedClassifierCV (fit on train only per GEMINI.md)
-    print(f"\n[3/4] Wrapping with CalibratedClassifierCV on train...")
-    calib_start = time.time()
-    min_class_count = min(int(np.sum(y_train == 0)), int(np.sum(y_train == 1)))
-    cv_folds = min(5, max(2, min_class_count))
-
-    calibrated_clf = CalibratedClassifierCV(
-        estimator=LinearSVC(C=best_c, random_state=RANDOM_SEED, max_iter=3000, dual="auto"),
-        cv=cv_folds
-    )
-    calibrated_clf.fit(X_train_scaled, y_train)
-    calib_time = time.time() - calib_start
-    print(f"Calibrated classifier trained in {calib_time:.2f}s ({cv_folds}-fold CV).")
-
-    # 5. Evaluate on Validation Set
-    print("\n[4/4] Evaluating Calibrated Hybrid Pipeline on Validation Set...")
-    val_preds = calibrated_clf.predict(X_val_scaled)
-    val_proba = calibrated_clf.predict_proba(X_val_scaled)
-    val_metrics = evaluate_predictions(y_val, val_preds, val_proba)
+    val_preds = best_svc.predict(X_val_scaled)
+    val_decision = best_svc.decision_function(X_val_scaled)
+    val_metrics = evaluate_predictions(y_val, val_preds)
 
     print("\n" + "=" * 55)
-    print(f"HYBRID VALIDATION RESULTS ({pooling_name.upper()} Pooling + SVM):")
+    print(f"HYBRID VALIDATION RESULTS ({pooling_name.upper()} Pooling + LinearSVC, C={best_c}):")
     print(f"  Accuracy:             {val_metrics['accuracy'] * 100:.2f}%")
     print(f"  Macro F1-Score:       {val_metrics['f1_macro']:.4f}")
     print(f"  Deceptive Precision:  {val_metrics['precision_deceptive']:.4f}")
     print(f"  Deceptive Recall:     {val_metrics['recall_deceptive']:.4f}")
     print(f"  Deceptive F1-Score:   {val_metrics['f1_deceptive']:.4f}")
-    print(f"  Average Confidence:   {val_metrics['average_confidence']:.4f}")
+    print(f"  Decision Score Range: [{float(np.min(val_decision)):.4f}, {float(np.max(val_decision)):.4f}]")
     print(f"  Confusion Matrix:     TN={val_metrics['confusion_matrix'][0][0]}, FP={val_metrics['confusion_matrix'][0][1]}")
     print(f"                        FN={val_metrics['confusion_matrix'][1][0]}, TP={val_metrics['confusion_matrix'][1][1]}")
     print("=" * 55)
@@ -189,12 +171,79 @@ def train_and_tune_hybrid_svm(
         "pooling": pooling_name,
         "scaler": scaler,
         "best_svc": best_svc,
-        "calibrated_clf": calibrated_clf,
         "best_c": best_c,
         "tuning_history": tuning_history,
         "val_metrics": val_metrics,
-        "calibration_time_seconds": round(calib_time, 2)
+        "decision_scores_summary": {
+            "min": round(float(np.min(val_decision)), 4),
+            "max": round(float(np.max(val_decision)), 4),
+            "mean": round(float(np.mean(val_decision)), 4),
+            "std": round(float(np.std(val_decision)), 4),
+        }
     }
+
+
+def compare_validation_pooling(
+    data_dir: str = "data/processed",
+    c_candidates: List[float] = [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Compare Mean Pooling vs. CLS Token Pooling on the validation set per GEMINI.md.
+    Uses frozen embeddings and tunes C for each pooling strategy independently.
+    """
+    print("\n" + "=" * 65)
+    print("VALIDATION POOLING COMPARISON (Mean vs. CLS Token Pooling)")
+    print("GEMINI.md: Mean pooling is default; CLS pooling is compared & reported.")
+    print("=" * 65)
+
+    # 1. Mean Pooling Evaluation
+    X_train_mean, y_train_mean = load_split_embeddings("train", pooling="mean", data_dir=data_dir)
+    X_val_mean, y_val_mean = load_split_embeddings("val", pooling="mean", data_dir=data_dir)
+    mean_results = train_and_tune_linear_svc(
+        X_train=X_train_mean,
+        y_train=y_train_mean,
+        X_val=X_val_mean,
+        y_val=y_val_mean,
+        c_candidates=c_candidates,
+        pooling_name="mean"
+    )
+
+    # 2. CLS Token Pooling Evaluation
+    X_train_cls, y_train_cls = load_split_embeddings("train", pooling="cls", data_dir=data_dir)
+    X_val_cls, y_val_cls = load_split_embeddings("val", pooling="cls", data_dir=data_dir)
+    cls_results = train_and_tune_linear_svc(
+        X_train=X_train_cls,
+        y_train=y_train_cls,
+        X_val=X_val_cls,
+        y_val=y_val_cls,
+        c_candidates=c_candidates,
+        pooling_name="cls"
+    )
+
+    # 3. Print Side-by-Side Comparison Table
+    m_vm = mean_results["val_metrics"]
+    c_vm = cls_results["val_metrics"]
+    acc_diff = (m_vm["accuracy"] - c_vm["accuracy"]) * 100
+    f1_diff = m_vm["f1_macro"] - c_vm["f1_macro"]
+
+    print("\n" + "=" * 68)
+    print("POOLED REPRESENTATION VALIDATION COMPARISON (Salminen Validation Split)")
+    print("=" * 68)
+    print(f"{'Metric':<25} | {'Mean Pooling (Default)':<22} | {'CLS Token Pooling':<18}")
+    print("-" * 68)
+    print(f"{'Optimal C Parameter':<25} | {mean_results['best_c']:<22} | {cls_results['best_c']:<18}")
+    print(f"{'Validation Accuracy':<25} | {m_vm['accuracy']*100:>20.2f}% | {c_vm['accuracy']*100:>16.2f}%")
+    print(f"{'Macro F1-Score':<25} | {m_vm['f1_macro']:>22.4f} | {c_vm['f1_macro']:>18.4f}")
+    print(f"{'Deceptive Precision':<25} | {m_vm['precision_deceptive']:>22.4f} | {c_vm['precision_deceptive']:>18.4f}")
+    print(f"{'Deceptive Recall':<25} | {m_vm['recall_deceptive']:>22.4f} | {c_vm['recall_deceptive']:>18.4f}")
+    print(f"{'Deceptive F1-Score':<25} | {m_vm['f1_deceptive']:>22.4f} | {c_vm['f1_deceptive']:>18.4f}")
+    print(f"{'Confusion Matrix':<25} | TN={m_vm['confusion_matrix'][0][0]}, FP={m_vm['confusion_matrix'][0][1]:<12} | TN={c_vm['confusion_matrix'][0][0]}, FP={c_vm['confusion_matrix'][0][1]}")
+    print(f"{'':<25} | FN={m_vm['confusion_matrix'][1][0]}, TP={m_vm['confusion_matrix'][1][1]:<12} | FN={c_vm['confusion_matrix'][1][0]}, TP={c_vm['confusion_matrix'][1][1]}")
+    print("-" * 68)
+    print(f"Summary: Mean pooling delta = {acc_diff:+.2f}% Accuracy, {f1_diff:+.4f} Macro F1 vs CLS.")
+    print("=" * 68)
+
+    return mean_results, cls_results
 
 
 def compare_with_baseline(hybrid_metrics: Dict[str, Any], data_dir: str = "data/processed") -> None:
@@ -221,92 +270,110 @@ def compare_with_baseline(hybrid_metrics: Dict[str, Any], data_dir: str = "data/
     print(f"{'Deceptive Precision':<25} | {b_val.get('precision_deceptive', 0):>18.4f} | {h_val.get('precision_deceptive', 0):>18.4f}")
     print(f"{'Deceptive Recall':<25} | {b_val.get('recall_deceptive', 0):>18.4f} | {h_val.get('recall_deceptive', 0):>18.4f}")
     print(f"{'Deceptive F1-Score':<25} | {b_val.get('f1_deceptive', 0):>18.4f} | {h_val.get('f1_deceptive', 0):>18.4f}")
-    print(f"{'Average Confidence':<25} | {b_val.get('average_confidence', 0):>18.4f} | {h_val.get('average_confidence', 0):>18.4f}")
     print("=" * 65)
 
 
 def run_hybrid_training_pipeline(
     data_dir: str = "data/processed",
     models_dir: str = "backend/models",
-    pooling: str = "mean",
-    c_candidates: List[float] = [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+    c_candidates: List[float] = [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 ) -> Dict[str, Any]:
-    """Execute Step 4: SVM classifier training, tuning, and calibration."""
+    """Execute Step 4: SVM classifier training, tuning, validation pooling comparison, and artifact export."""
     data_path = Path(data_dir)
     models_path = Path(models_dir)
     models_path.mkdir(parents=True, exist_ok=True)
 
     print("=" * 65)
-    print("RevuLens Step 4: DistilBERT-SVM Hybrid Pipeline (Training & Tuning)")
+    print("RevuLens Step 4: DistilBERT-SVM Hybrid Pipeline (Training & Pooling Comparison)")
     print(f"Data directory:   {data_dir}")
     print(f"Models directory: {models_dir}")
-    print(f"Primary Pooling:  {pooling}")
+    print(f"Primary Pooling:  mean (excluding padding)")
     print(f"NOTE: Test split is strictly held out until Step 5 final evaluation.")
     print("=" * 65)
 
-    # 1. Load pre-extracted embeddings for train and val
-    X_train, y_train = load_split_embeddings("train", pooling=pooling, data_dir=data_dir)
-    X_val, y_val = load_split_embeddings("val", pooling=pooling, data_dir=data_dir)
-
-    # 2. Train, tune C, and calibrate on validation split
-    results = train_and_tune_hybrid_svm(
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        c_candidates=c_candidates,
-        pooling_name=pooling
+    # 1. Run validation pooling comparison (mean vs cls)
+    mean_results, cls_results = compare_validation_pooling(
+        data_dir=data_dir,
+        c_candidates=c_candidates
     )
 
-    # 3. Save full hybrid model artifact
+    # 2. Save full hybrid model artifact (primary: mean pooling)
+    X_train_mean, _ = load_split_embeddings("train", pooling="mean", data_dir=data_dir)
     pipeline_artifact = {
-        "model_type": f"DistilBERT-SVM Hybrid ({pooling.upper()} Pooling)",
+        "model_type": "DistilBERT-SVM Hybrid (MEAN Pooling)",
         "encoder_checkpoint": "distilbert-base-multilingual-cased",
-        "pooling_strategy": pooling,
-        "feature_dim": X_train.shape[1],
-        "scaler": results["scaler"],
-        "classifier": results["calibrated_clf"],
-        "raw_svc": results["best_svc"],
-        "best_C": results["best_c"],
+        "pooling_strategy": "mean",
+        "feature_dim": X_train_mean.shape[1],
+        "scaler": mean_results["scaler"],
+        "classifier": mean_results["best_svc"],
+        "raw_svc": mean_results["best_svc"],
+        "best_C": mean_results["best_c"],
         "random_seed": RANDOM_SEED,
         "scikit_learn_version": sklearn.__version__,
-        "train_samples": len(X_train),
-        "val_metrics": results["val_metrics"]
+        "train_samples": len(X_train_mean),
+        "val_metrics": mean_results["val_metrics"],
+        "pooling_comparison": {
+            "mean": {
+                "best_C": mean_results["best_c"],
+                "validation_metrics": mean_results["val_metrics"],
+                "decision_scores_summary": mean_results["decision_scores_summary"]
+            },
+            "cls": {
+                "best_C": cls_results["best_c"],
+                "validation_metrics": cls_results["val_metrics"],
+                "decision_scores_summary": cls_results["decision_scores_summary"]
+            }
+        }
     }
     model_save_path = models_path / "hybrid_distilbert_svm_pipeline.joblib"
     joblib.dump(pipeline_artifact, model_save_path)
     file_size_mb = os.path.getsize(model_save_path) / (1024 * 1024)
     print(f"\nSaved hybrid pipeline artifact to: {model_save_path} ({file_size_mb:.2f} MB)")
 
-    # 4. Save validation metrics JSON
+    # 3. Save validation metrics JSON
     metrics_save_path = data_path / "hybrid_val_metrics.json"
     summary_report = {
-        "model": f"DistilBERT-SVM Hybrid ({pooling.upper()} Pooling)",
+        "model": "DistilBERT-SVM Hybrid (MEAN Pooling)",
         "encoder": "distilbert-base-multilingual-cased",
-        "pooling": pooling,
-        "best_C": results["best_c"],
-        "tuning_history": {str(k): v for k, v in results["tuning_history"].items()},
-        "validation_metrics": results["val_metrics"],
+        "pooling": "mean",
+        "best_C": mean_results["best_c"],
+        "tuning_history": {str(k): v for k, v in mean_results["tuning_history"].items()},
+        "validation_metrics": mean_results["val_metrics"],
+        "decision_scores_summary": mean_results["decision_scores_summary"],
+        "pooling_comparison": {
+            "mean": {
+                "best_C": mean_results["best_c"],
+                "validation_metrics": mean_results["val_metrics"]
+            },
+            "cls": {
+                "best_C": cls_results["best_c"],
+                "validation_metrics": cls_results["val_metrics"]
+            },
+            "delta_mean_minus_cls": {
+                "accuracy": round(mean_results["val_metrics"]["accuracy"] - cls_results["val_metrics"]["accuracy"], 4),
+                "f1_macro": round(mean_results["val_metrics"]["f1_macro"] - cls_results["val_metrics"]["f1_macro"], 4),
+            }
+        },
         "training_metadata": {
-            "train_samples": len(X_train),
-            "val_samples": len(X_val),
-            "feature_dim": X_train.shape[1],
-            "calibration_time_seconds": results["calibration_time_seconds"]
+            "train_samples": len(X_train_mean),
+            "val_samples": len(mean_results["scaler"].mean_),
+            "feature_dim": X_train_mean.shape[1],
+            "calibrated": False,
+            "decision_rule": "sign of LinearSVC decision_function"
         }
     }
     with open(metrics_save_path, "w", encoding="utf-8") as f:
         json.dump(summary_report, f, indent=2)
     print(f"Saved validation metrics JSON to: {metrics_save_path}")
 
-    # 5. Compare with TF-IDF baseline
-    compare_with_baseline(results["val_metrics"], data_dir=data_dir)
+    # 4. Compare with TF-IDF baseline
+    compare_with_baseline(mean_results["val_metrics"], data_dir=data_dir)
 
     return summary_report
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="RevuLens SVM Training & Tuning (Step 4)")
-    parser.add_argument("--pooling", choices=["mean", "cls"], default="mean", help="Pooling strategy (default: mean)")
+    parser = argparse.ArgumentParser(description="RevuLens SVM Training, Tuning & Pooling Comparison (Step 4)")
     args = parser.parse_args()
 
-    run_hybrid_training_pipeline(pooling=args.pooling)
+    run_hybrid_training_pipeline()

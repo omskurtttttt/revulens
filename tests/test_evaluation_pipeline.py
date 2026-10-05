@@ -118,6 +118,29 @@ class TestEvaluationPipeline(unittest.TestCase):
             self.assertNotIn("accuracy", firecs["hybrid"])
             self.assertIn("share_flagged_deceptive_pct", firecs["hybrid"])
 
+    def test_consolidated_results_file_structure(self):
+        """Verify model_evaluation_results.json contains validation pooling comparison and test metrics per GEMINI.md."""
+        import json
+        results_path = "data/processed/model_evaluation_results.json"
+        if not os.path.exists(results_path):
+            self.skipTest("model_evaluation_results.json not yet generated")
+
+        with open(results_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertIn("validation_pooling_comparison", data)
+        self.assertIn("validation_baseline_vs_hybrid", data)
+        self.assertIn("test_evaluation", data)
+        self.assertIn("firecs_taglish_exploratory_check", data)
+
+        # Check pooling comparison details
+        pool_comp = data["validation_pooling_comparison"]
+        self.assertIn("mean_pooling", pool_comp)
+        self.assertIn("cls_token_pooling", pool_comp)
+        self.assertIn("accuracy", pool_comp["mean_pooling"]["metrics"])
+        self.assertIn("accuracy", pool_comp["cls_token_pooling"]["metrics"])
+        self.assertIn("comparison_summary", pool_comp)
+
 
 if __name__ == "__main__":
     unittest.main()

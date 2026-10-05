@@ -77,18 +77,17 @@ class ClassificationService:
         # 3. Standardize features
         scaled = self.scaler.transform(emb)
 
-        # 4. Calibrated probabilities: [P(Genuine), P(Deceptive)]
-        proba = self.classifier.predict_proba(scaled)[0]
-        p_genuine = float(proba[0])
-        p_deceptive = float(proba[1])
-
-        # 5. Derive label and display label
-        if p_deceptive >= 0.5:
-            internal_label = InternalClass.DECEPTIVE.value
-            confidence = p_deceptive
+        # 4. Sign of SVM decision function decides class per GEMINI.md
+        if hasattr(self.classifier, "decision_function"):
+            decision_score = float(self.classifier.decision_function(scaled)[0])
+            internal_label = InternalClass.DECEPTIVE.value if decision_score > 0 else InternalClass.GENUINE.value
+            p1 = float(1.0 / (1.0 + np.exp(-decision_score)))
+            confidence = p1 if decision_score > 0 else (1.0 - p1)
         else:
-            internal_label = InternalClass.GENUINE.value
-            confidence = p_genuine
+            proba = self.classifier.predict_proba(scaled)[0]
+            p_deceptive = float(proba[1])
+            internal_label = InternalClass.DECEPTIVE.value if p_deceptive >= 0.5 else InternalClass.GENUINE.value
+            confidence = float(np.max(proba))
 
         display_lbl = get_display_label(internal_label)
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -96,6 +95,6 @@ class ClassificationService:
         return {
             "label": internal_label,
             "display_label": display_lbl,
-            "confidence": round(confidence, 4),
+            "confidence": round(float(confidence), 4),
             "latency_ms": elapsed_ms
         }

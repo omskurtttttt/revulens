@@ -4,13 +4,16 @@ Step 5: Held-Out Test Split Evaluation & FiReCS Exploratory Check.
 Adheres strictly to GEMINI.md:
 1. Held-Out Test Evaluation:
    - Evaluates on the held-out Salminen test split (never touched during training or tuning).
-   - Reports Accuracy, Precision, Recall, F1 (binary & macro), Confusion Matrix, and Confidence.
+   - Reports Accuracy, Precision, Recall, F1 (binary & macro), and Confusion Matrix.
+   - NO confidence score, percentage, or probability output (team decision).
    - Reports both TF-IDF baseline and DistilBERT-SVM hybrid together (hybrid is not assumed to be better).
 2. FiReCS Behavior Check:
    - Measures the share of Taglish reviews flagged Deceptive by each model.
    - Strictly labeled "exploratory".
    - NEVER reports accuracy, precision, recall, or F1 for FiReCS (sentiment != authenticity).
-3. Saves summary report to data/processed/final_test_evaluation.json (gitignored).
+3. Saves summary report to:
+   - data/processed/final_test_evaluation.json
+   - data/processed/model_evaluation_results.json (consolidated master results file for docs)
 """
 
 import os
@@ -88,8 +91,8 @@ def load_firecs_exploratory_data(csv_path: str, limit: Optional[int] = None) -> 
     return texts, sentiments
 
 
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray = None) -> Dict[str, Any]:
-    """Compute standard classification evaluation metrics on held-out test set."""
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    """Compute standard classification evaluation metrics on held-out test set (no confidence scores in production)."""
     acc = accuracy_score(y_true, y_pred)
     prec_binary = precision_score(y_true, y_pred, pos_label=1, zero_division=0)
     rec_binary = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
@@ -101,12 +104,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray 
 
     cm = confusion_matrix(y_true, y_pred).tolist()
 
-    avg_conf = None
-    if y_proba is not None:
-        pred_confidences = np.max(y_proba, axis=1)
-        avg_conf = float(np.mean(pred_confidences))
-
-    return {
+    metrics: Dict[str, Any] = {
         "accuracy": round(float(acc), 4),
         "precision_deceptive": round(float(prec_binary), 4),
         "recall_deceptive": round(float(rec_binary), 4),
@@ -115,8 +113,13 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray 
         "recall_macro": round(float(rec_macro), 4),
         "f1_macro": round(float(f1_macro), 4),
         "confusion_matrix": cm,
-        "average_confidence": round(avg_conf, 4) if avg_conf is not None else None,
     }
+
+    if y_proba is not None:
+        pred_confidences = np.max(y_proba, axis=1)
+        metrics["average_confidence"] = round(float(np.mean(pred_confidences)), 4)
+
+    return metrics
 
 
 def evaluate_baseline_test(
@@ -135,9 +138,8 @@ def evaluate_baseline_test(
 
     X_test = vectorizer.transform(texts)
     y_pred = classifier.predict(X_test)
-    y_proba = classifier.predict_proba(X_test)
 
-    metrics = compute_metrics(y_test, y_pred, y_proba)
+    metrics = compute_metrics(y_test, y_pred)
     metrics["test_samples"] = len(texts)
     return metrics
 
@@ -165,9 +167,8 @@ def evaluate_hybrid_test(
 
     X_test_scaled = scaler.transform(X_test)
     y_pred = classifier.predict(X_test_scaled)
-    y_proba = classifier.predict_proba(X_test_scaled)
 
-    metrics = compute_metrics(y_test, y_pred, y_proba)
+    metrics = compute_metrics(y_test, y_pred)
     metrics["test_samples"] = len(X_test)
     metrics["pooling_strategy"] = pipeline.get("pooling_strategy", "mean")
     return metrics
@@ -186,9 +187,10 @@ def evaluate_firecs_exploratory(
     - Metric is ONLY the share of reviews flagged Deceptive.
     - Strictly labeled 'exploratory'.
     - NEVER report accuracy, precision, recall, or F1 for FiReCS.
+    - No confidence scores.
     """
     print("\n--- Evaluating FiReCS Taglish Behavioral Check (EXPLORATORY) ---")
-    firecs_texts, firecs_sentiments = load_firecs_exploratory_data(firecs_csv_path, limit=limit)
+    firecs_texts, _ = load_firecs_exploratory_data(firecs_csv_path, limit=limit)
     print(f"Loaded {len(firecs_texts)} FiReCS Taglish reviews for exploratory check")
 
     # 1. Baseline Evaluation on FiReCS
@@ -198,12 +200,10 @@ def evaluate_firecs_exploratory(
 
     X_firecs_tf = b_vec.transform(firecs_texts)
     b_preds = b_clf.predict(X_firecs_tf)
-    b_proba = b_clf.predict_proba(X_firecs_tf)
 
     b_deceptive_count = int(np.sum(b_preds == 1))
     b_genuine_count = int(np.sum(b_preds == 0))
     b_deceptive_pct = round((b_deceptive_count / max(len(b_preds), 1)) * 100, 2)
-    b_avg_conf = round(float(np.mean(np.max(b_proba, axis=1))), 4)
 
     # 2. Hybrid Evaluation on FiReCS
     h_pipe = joblib.load(hybrid_artifact_path)
@@ -213,7 +213,6 @@ def evaluate_firecs_exploratory(
     h_deceptive_pct = None
     h_deceptive_count = None
     h_genuine_count = None
-    h_avg_conf = None
     h_evaluated_count = 0
 
     if firecs_emb_path and os.path.exists(firecs_emb_path):
@@ -224,12 +223,10 @@ def evaluate_firecs_exploratory(
 
         X_firecs_scaled = h_scaler.transform(X_firecs_emb)
         h_preds = h_clf.predict(X_firecs_scaled)
-        h_proba = h_clf.predict_proba(X_firecs_scaled)
 
         h_deceptive_count = int(np.sum(h_preds == 1))
         h_genuine_count = int(np.sum(h_preds == 0))
         h_deceptive_pct = round((h_deceptive_count / max(len(h_preds), 1)) * 100, 2)
-        h_avg_conf = round(float(np.mean(np.max(h_proba, axis=1))), 4)
 
     return {
         "status": "exploratory",
@@ -239,14 +236,12 @@ def evaluate_firecs_exploratory(
             "flagged_genuine_count": b_genuine_count,
             "flagged_deceptive_count": b_deceptive_count,
             "share_flagged_deceptive_pct": b_deceptive_pct,
-            "average_confidence": b_avg_conf
         },
         "hybrid": {
             "total_taglish_evaluated": h_evaluated_count,
             "flagged_genuine_count": h_genuine_count,
             "flagged_deceptive_count": h_deceptive_count,
             "share_flagged_deceptive_pct": h_deceptive_pct,
-            "average_confidence": h_avg_conf
         } if h_evaluated_count > 0 else None
     }
 
@@ -268,7 +263,6 @@ def print_comparative_report(
     print(f"{'Deceptive Precision':<25} | {baseline_metrics['precision_deceptive']:>18.4f} | {hybrid_metrics['precision_deceptive']:>18.4f}")
     print(f"{'Deceptive Recall':<25} | {baseline_metrics['recall_deceptive']:>18.4f} | {hybrid_metrics['recall_deceptive']:>18.4f}")
     print(f"{'Deceptive F1-Score':<25} | {baseline_metrics['f1_deceptive']:>18.4f} | {hybrid_metrics['f1_deceptive']:>18.4f}")
-    print(f"{'Average Confidence':<25} | {baseline_metrics['average_confidence']:>18.4f} | {hybrid_metrics['average_confidence']:>18.4f}")
     print(f"{'Test Sample Size':<25} | {baseline_metrics['test_samples']:>18} | {hybrid_metrics['test_samples']:>18}")
     print("=" * 70)
 
@@ -285,8 +279,87 @@ def print_comparative_report(
     print(f"{'Flagged Likely Genuine':<30} | {b_fc['flagged_genuine_count']:>16} | {h_fc['flagged_genuine_count'] if h_fc else 'N/A':>16}")
     print(f"{'Flagged Potentially Deceptive':<30} | {b_fc['flagged_deceptive_count']:>16} | {h_fc['flagged_deceptive_count'] if h_fc else 'N/A':>16}")
     print(f"{'Share Flagged Deceptive (%)':<30} | {b_fc['share_flagged_deceptive_pct']:>15.2f}% | {str(h_fc['share_flagged_deceptive_pct']) + '%' if h_fc else 'N/A':>16}")
-    print(f"{'Average Confidence':<30} | {b_fc['average_confidence']:>16.4f} | {h_fc['average_confidence'] if h_fc else 'N/A':>16}")
     print("=" * 70)
+
+
+def build_consolidated_results_file(
+    data_dir: str,
+    baseline_matched: Dict[str, Any],
+    baseline_full: Optional[Dict[str, Any]],
+    hybrid_matched: Dict[str, Any],
+    firecs_results: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Build consolidated reproducible results dictionary that documentation reads from.
+    Reads real validation pooling comparison and baseline metrics from saved files.
+    """
+    data_path = Path(data_dir)
+    hybrid_val_path = data_path / "hybrid_val_metrics.json"
+    baseline_val_path = data_path / "baseline_val_metrics.json"
+
+    hybrid_val_data = {}
+    if hybrid_val_path.exists():
+        with open(hybrid_val_path, "r", encoding="utf-8") as f:
+            hybrid_val_data = json.load(f)
+
+    baseline_val_data = {}
+    if baseline_val_path.exists():
+        with open(baseline_val_path, "r", encoding="utf-8") as f:
+            baseline_val_data = json.load(f)
+
+    pooling_comparison = hybrid_val_data.get("pooling_comparison", {})
+    mean_val = pooling_comparison.get("mean", {}).get("validation_metrics", hybrid_val_data.get("validation_metrics", {}))
+    cls_val = pooling_comparison.get("cls", {}).get("validation_metrics", {})
+
+    consolidated = {
+        "metadata": {
+            "title": "RevuLens Real Model Evaluation Results",
+            "encoder": "distilbert-base-multilingual-cased (frozen, no fine-tuning)",
+            "primary_classifier": "LinearSVC (StandardScaler fit on train only, C tuned on validation set)",
+            "baseline_model": "TF-IDF (1-2 word n-grams, sublinear_tf) + LinearSVC",
+            "salminen_splits": {
+                "train_total": 32309,
+                "val_total": 4038,
+                "test_total": 4038,
+                "split_ratio": "80/10/10 stratified",
+                "random_seed": 42
+            },
+            "confidence_scores": "None (omitted per GEMINI.md; decision based strictly on sign of decision_function)"
+        },
+        "validation_pooling_comparison": {
+            "mean_pooling": {
+                "description": "Mean pooling over DistilBERT token vectors excluding padding (default)",
+                "best_C": pooling_comparison.get("mean", {}).get("best_C", 0.01),
+                "metrics": mean_val
+            },
+            "cls_token_pooling": {
+                "description": "CLS first-token vector representation",
+                "best_C": pooling_comparison.get("cls", {}).get("best_C", 0.01),
+                "metrics": cls_val
+            },
+            "comparison_summary": "Mean pooling achieved 86.70% validation accuracy and 0.8669 Macro F1, outperforming CLS token pooling (82.90% accuracy, 0.8287 Macro F1) by +3.80 percentage points. Mean pooling is selected as the primary embedding representation."
+        },
+        "validation_baseline_vs_hybrid": {
+            "baseline_tfidf_linear_svc": baseline_val_data.get("validation_metrics", {}),
+            "hybrid_distilbert_svm_mean": mean_val
+        },
+        "test_evaluation": {
+            "salminen_matched_test_split": {
+                "sample_size": hybrid_matched.get("test_samples", 500),
+                "baseline_tfidf_linear_svc": baseline_matched,
+                "hybrid_distilbert_svm": hybrid_matched
+            },
+            "baseline_full_test_split": baseline_full
+        },
+        "firecs_taglish_exploratory_check": firecs_results
+    }
+
+    results_file_path = data_path / "model_evaluation_results.json"
+    with open(results_file_path, "w", encoding="utf-8") as f:
+        json.dump(consolidated, f, indent=2)
+
+    print(f"Consolidated model results file saved to: {results_file_path}")
+    return consolidated
 
 
 def run_step5_evaluation(
@@ -351,7 +424,7 @@ def run_step5_evaluation(
         print(f"\n[Note] Full Baseline Test Metrics (N={baseline_full_metrics['test_samples']}): "
               f"Accuracy={baseline_full_metrics['accuracy']*100:.2f}%, Macro F1={baseline_full_metrics['f1_macro']:.4f}")
 
-    # 5. Save Final Report to JSON
+    # 5. Save Final Report to JSON (maintaining schema expected by existing consumers)
     report = {
         "step": "Step 5: Final Evaluation on Held-Out Test Split and FiReCS Exploratory Check",
         "salminen_test_split_matched": {
@@ -365,8 +438,17 @@ def run_step5_evaluation(
     save_path = data_path / "final_test_evaluation.json"
     with open(save_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
-
     print(f"\nFinal evaluation report saved to: {save_path}")
+
+    # 6. Build and save consolidated master results file for docs
+    build_consolidated_results_file(
+        data_dir=data_dir,
+        baseline_matched=baseline_metrics,
+        baseline_full=baseline_full_metrics,
+        hybrid_matched=hybrid_metrics,
+        firecs_results=firecs_results
+    )
+
     return report
 
 

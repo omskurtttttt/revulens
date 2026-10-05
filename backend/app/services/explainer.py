@@ -102,9 +102,15 @@ class SHAPExplainerService:
         # 2. StandardScaler fit on train
         scaled = self.scaler.transform(embeddings)
 
-        # 3. Calibrated probabilities: [P(Genuine), P(Deceptive)]
-        proba = self.classifier.predict_proba(scaled)
-        return proba
+        # 3. Probabilities (or logistic sigmoid over decision_function for LinearSVC)
+        if hasattr(self.classifier, "predict_proba"):
+            return self.classifier.predict_proba(scaled)
+
+        # Map LinearSVC decision function to pseudo-probabilities [P(Genuine), P(Deceptive)]
+        decision = self.classifier.decision_function(scaled)
+        p_deceptive = 1.0 / (1.0 + np.exp(-np.clip(decision, -50.0, 50.0)))
+        p_genuine = 1.0 - p_deceptive
+        return np.column_stack([p_genuine, p_deceptive])
 
     def _get_explainer(self):
         """Lazy initialization of SHAP Explainer with Text masker."""
