@@ -17,6 +17,7 @@ import os
 import re
 import time
 import hashlib
+import threading
 from typing import Dict, List, Any, Optional, Tuple
 
 import joblib
@@ -73,6 +74,9 @@ class SHAPExplainerService:
         # Lazy-initialized SHAP explainer instance
         self._explainer = None
 
+        # Re-entrant thread lock for thread-safe model evaluation & cache synchronization per GEMINI.md
+        self._lock = threading.RLock()
+
     def _pipeline_predict_proba(self, texts: np.ndarray | List[str]) -> np.ndarray:
         """
         Black-box prediction function for SHAP:
@@ -113,18 +117,19 @@ class SHAPExplainerService:
         return np.column_stack([p_genuine, p_deceptive])
 
     def _get_explainer(self):
-        """Lazy initialization of SHAP Explainer with Text masker."""
-        if self._explainer is None:
-            import shap
+        """Thread-safe lazy initialization of SHAP Explainer with Text masker."""
+        with self._lock:
+            if self._explainer is None:
+                import shap
 
-            # Text masker that splits on whitespace while preserving word tokens
-            masker = shap.maskers.Text(tokenizer=r"\s+")
-            self._explainer = shap.Explainer(
-                self._pipeline_predict_proba,
-                masker=masker,
-                output_names=["Genuine", "Deceptive"]
-            )
-        return self._explainer
+                # Text masker that splits on whitespace while preserving word tokens
+                masker = shap.maskers.Text(tokenizer=r"\s+")
+                self._explainer = shap.Explainer(
+                    self._pipeline_predict_proba,
+                    masker=masker,
+                    output_names=["Genuine", "Deceptive"]
+                )
+            return self._explainer
 
     def _make_cache_key(self, text: str, max_evals: int) -> str:
         """Generate a deterministic MD5 hash key for caching explanations."""
@@ -139,6 +144,7 @@ class SHAPExplainerService:
     ) -> Dict[str, Any]:
         """
         Compute word-level SHAP attributions for the input review text.
+        Guarded against concurrent access with re-entrant locking per GEMINI.md.
 
         Args:
             text: Raw input review text selected by user.
@@ -176,63 +182,72 @@ class SHAPExplainerService:
             text = " ".join(words[:effective_max_words])
             truncated = True
 
-        # 2. Check cache
+        # 2. Check cache (thread-safe)
         evals_budget = max_evals or self.default_max_evals
         cache_key = self._make_cache_key(text, evals_budget)
-        if cache_key in self._cache:
-            cached_res = self._cache[cache_key].copy()
-            cached_res["cached"] = True
-            cached_res["latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
-            return cached_res
+        with self._lock:
+            if cache_key in self._cache:
+                cached_res = self._cache[cache_key].copy()
+                cached_res["cached"] = True
+                cached_res["latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
+                return cached_res
 
-        # 3. Compute explanation via SHAP
-        explainer = self._get_explainer()
-        explanation = explainer([text], max_evals=evals_budget)
+        # 3. Compute explanation via SHAP (thread-safe execution)
+        with self._lock:
+            # Re-check cache inside lock in case another thread computed it while waiting
+            if cache_key in self._cache:
+                cached_res = self._cache[cache_key].copy()
+                cached_res["cached"] = True
+                cached_res["latency_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
+                return cached_res
 
-        # 4. Extract token texts and weights for P(Deceptive) (class index 1)
-        raw_tokens = explanation.data[0]
-        # Shape of values: (num_tokens, 2) -> column 1 is Deceptive
-        raw_values = explanation.values[0]
-        if raw_values.ndim == 2:
-            deceptive_weights = raw_values[:, 1]
-        else:
-            deceptive_weights = raw_values
+            explainer = self._get_explainer()
+            explanation = explainer([text], max_evals=evals_budget)
 
-        # Base value for Deceptive class
-        raw_base = explanation.base_values[0]
-        if isinstance(raw_base, (np.ndarray, list)):
-            base_value = float(raw_base[1])
-        else:
-            base_value = float(raw_base)
+            # 4. Extract token texts and weights for P(Deceptive) (class index 1)
+            raw_tokens = explanation.data[0]
+            # Shape of values: (num_tokens, 2) -> column 1 is Deceptive
+            raw_values = explanation.values[0]
+            if raw_values.ndim == 2:
+                deceptive_weights = raw_values[:, 1]
+            else:
+                deceptive_weights = raw_values
 
-        tokens_list = []
-        for t, w in zip(raw_tokens, deceptive_weights):
-            clean_t = t.strip()
-            if clean_t:
-                tokens_list.append({
-                    "text": clean_t,
-                    "weight": round(float(w), 4)
-                })
+            # Base value for Deceptive class
+            raw_base = explanation.base_values[0]
+            if isinstance(raw_base, (np.ndarray, list)):
+                base_value = float(raw_base[1])
+            else:
+                base_value = float(raw_base)
 
-        # Calculate final model prediction probability
-        prob_pred = self._pipeline_predict_proba([text])[0]
-        p_deceptive = float(prob_pred[1])
+            tokens_list = []
+            for t, w in zip(raw_tokens, deceptive_weights):
+                clean_t = t.strip()
+                if clean_t:
+                    tokens_list.append({
+                        "text": clean_t,
+                        "weight": round(float(w), 4)
+                    })
 
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            # Calculate final model prediction probability
+            prob_pred = self._pipeline_predict_proba([text])[0]
+            p_deceptive = float(prob_pred[1])
 
-        result = {
-            "tokens": tokens_list,
-            "base_value": round(base_value, 4),
-            "prediction_deceptive_prob": round(p_deceptive, 4),
-            "latency_ms": elapsed_ms,
-            "cached": False,
-            "truncated": truncated
-        }
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-        # Store in cache (FIFO eviction if capacity reached)
-        if len(self._cache) >= self.cache_size:
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-        self._cache[cache_key] = result.copy()
+            result = {
+                "tokens": tokens_list,
+                "base_value": round(base_value, 4),
+                "prediction_deceptive_prob": round(p_deceptive, 4),
+                "latency_ms": elapsed_ms,
+                "cached": False,
+                "truncated": truncated
+            }
 
-        return result
+            # Store in cache (FIFO eviction if capacity reached)
+            if len(self._cache) >= self.cache_size:
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
+            self._cache[cache_key] = result.copy()
+
+            return result

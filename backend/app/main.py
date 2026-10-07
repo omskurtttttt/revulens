@@ -175,11 +175,12 @@ async def health_check(request: Request) -> HealthResponse:
 
 
 @app.post("/classify", response_model=ClassifyResponse, tags=["Inference"])
-async def classify_review(request: Request, payload: ClassifyRequest) -> ClassifyResponse:
+def classify_review(request: Request, payload: ClassifyRequest) -> ClassifyResponse:
     """
     Classify a review selection into Likely Genuine or Potentially Deceptive.
 
-    Strictly fulfills GEMINI.md contract: { label, display_label, confidence }.
+    Synchronous endpoint dispatched to threadpool per GEMINI.md to ensure
+    FastAPI event loop is never blocked by model inference.
     Ultra-fast execution (<150 ms) without computing SHAP.
     """
     classifier: ClassificationService = getattr(request.app.state, "classifier_service", None)
@@ -200,12 +201,13 @@ async def classify_review(request: Request, payload: ClassifyRequest) -> Classif
 
 
 @app.post("/explain", response_model=ExplainResponse, tags=["Explainability"])
-async def explain_review(request: Request, payload: ExplainRequest) -> ExplainResponse:
+def explain_review(request: Request, payload: ExplainRequest) -> ExplainResponse:
     """
     Compute word-level SHAP attributions for a review selection.
 
-    Strictly fulfills GEMINI.md contract: { tokens: [{ text, weight }], base_value }.
-    Runs asynchronously and utilizes in-memory LRU caching.
+    Synchronous endpoint dispatched to threadpool per GEMINI.md to ensure
+    FastAPI event loop is never blocked during heavy SHAP permutation sampling.
+    Utilizes thread-safe in-memory caching and lock synchronization.
     """
     explainer: SHAPExplainerService = getattr(request.app.state, "explainer_service", None)
     if not explainer:
