@@ -325,7 +325,7 @@
             return;
           }
 
-          const { tokens, base_value, latency_ms, cached } = response.data;
+          const { tokens, latency_ms, cached } = response.data;
           shapStatus.textContent = `Ready (${tokens.length} tokens, ${latency_ms ? latency_ms.toFixed(0) : 0}ms${cached ? " - cached" : ""})`;
           shapStatus.className = "revulens-shap-ready";
 
@@ -371,7 +371,7 @@
     });
   }
 
-  function applyInlineWordHighlights(tokens) {
+  function applyInlineWordHighlights(_tokens) {
     // If the original selection range is still active in the DOM, we can overlay highlight markers
     if (!currentSelectionRange) return;
 

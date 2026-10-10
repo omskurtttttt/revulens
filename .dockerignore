@@ -1,0 +1,17 @@
+.git
+.github
+.agents
+data/
+notebooks/
+tests/
+extension/
+docs/
+*.md
+!demo.html
+.env
+.env.*
+*.pyc
+__pycache__/
+*.joblib.tmp
+node_modules/
+.pytest_cache/

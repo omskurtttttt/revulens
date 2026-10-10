@@ -7,8 +7,8 @@ on:
     branches: ["**"]
 
 jobs:
-  test:
-    name: Run Unit Tests & Syntax Checks
+  python-test:
+    name: Run Backend Unit Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -19,11 +19,38 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+          cache: "pip"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
 
       - name: Verify Python syntax and compile
         run: |
-          python -m compileall backend tests
+          python -m compileall backend tests notebooks
 
       - name: Run unit tests
         run: |
           python -m unittest discover tests
+
+  js-lint:
+    name: Extension JavaScript Lint Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify JavaScript syntax
+        run: |
+          node --check extension/config.js extension/background/service_worker.js extension/content/content_script.js extension/popup/popup.js
+
+      - name: Run ESLint on extension
+        run: |
+          npx --yes eslint extension/

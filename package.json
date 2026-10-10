@@ -1,0 +1,13 @@
+{
+  "name": "revulens",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RevuLens - Explainable fake e-commerce review detector Chrome extension and backend",
+  "scripts": {
+    "lint": "eslint extension/",
+    "lint:syntax": "node --check extension/config.js extension/background/service_worker.js extension/content/content_script.js extension/popup/popup.js"
+  },
+  "devDependencies": {
+    "eslint": "^9.20.0"
+  }
+}

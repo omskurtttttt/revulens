@@ -36,6 +36,8 @@ class TestBackendAPI(unittest.TestCase):
 
     def test_root_endpoint(self):
         """Verify root endpoint returns API information."""
+        if not self.has_model:
+            self.skipTest("Hybrid model pipeline not found on disk")
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -145,6 +147,8 @@ class TestBackendAPI(unittest.TestCase):
 
     def test_classify_invalid_empty_input(self):
         """Verify API handles empty text with validation error."""
+        if not self.has_model:
+            self.skipTest("Hybrid model pipeline not found on disk")
         response = self.client.post("/classify", json={"text": ""})
         self.assertEqual(response.status_code, 422)  # Pydantic validation error
 

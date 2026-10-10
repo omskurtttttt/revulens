@@ -2,7 +2,13 @@ import os
 import shutil
 import tempfile
 import unittest
-from notebooks.preprocess import stratified_split_80_10_10, run_pipeline
+import importlib
+
+# Dynamically import numbered module per repository convention
+preprocess_module = importlib.import_module("notebooks.01_preprocess")
+stratified_split_80_10_10 = preprocess_module.stratified_split_80_10_10
+run_pipeline = preprocess_module.run_pipeline
+
 from backend.app.constants import InternalClass
 
 

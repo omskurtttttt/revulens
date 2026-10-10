@@ -30,7 +30,7 @@ This directory stores the datasets used by RevuLens. Raw data files and processe
 ## Processing
 Run the preprocessing script to clean, deduplicate, and split the data:
 ```bash
-python notebooks/preprocess.py
+python notebooks/01_preprocess.py
 ```
 This generates:
 - `data/processed/train.csv` (80% stratified split)

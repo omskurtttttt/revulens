@@ -145,14 +145,28 @@ uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 The API is available at `http://127.0.0.1:8000` (`/health`, `/classify`, `/explain`, and `/docs`).
 
-### 3. Extension Installation
+### 3. Docker Deployment (Containerized Backend)
+Alternatively, deploy the backend using the Dockerfile (Chapter 3):
+```bash
+# Build backend container image
+docker build -t revulens-backend .
+
+# Run container exposing port 8000
+docker run -p 8000:8000 revulens-backend
+```
+
+### 4. Extension Installation
 1. Open Chrome and navigate to `chrome://extensions/`.
 2. Enable **Developer mode** (toggle in top right).
 3. Click **Load unpacked** and select the `extension/` directory from this repository.
 4. Open any shopping site (e.g., Shopee Philippines), highlight any review text, and click the floating **Analyze** button.
 
-### 4. Running the Test Suite
+### 5. Running Tests & Linters
 ```bash
+# Python unit tests
 python -m unittest discover tests
+
+# JavaScript linter
+npx eslint extension/
 ```
-All unit, integration, contract, and concurrency tests run locally without requiring remote GPUs.
+All unit, integration, contract, and concurrency tests run locally without requiring remote GPUs. Model-dependent tests skip automatically if local `.joblib` weights are absent.
