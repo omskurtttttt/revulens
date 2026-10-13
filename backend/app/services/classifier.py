@@ -1,16 +1,18 @@
 """
-Classification Service for RevuLens (Step 7).
+Classification Service for RevuLens.
 
 Adheres strictly to GEMINI.md:
 1. Normalizes text using the shared normalize_text function from backend.app.preprocessing.
 2. Extracts frozen DistilBERT embedding (mean pooling).
-3. Standardizes features with StandardScaler fit on train.
-4. Predicts calibrated probability via CalibratedClassifierCV.
-5. Returns { label, display_label, confidence } with sub-150ms execution on CPU.
+3. Standardizes features with StandardScaler fit on train only.
+4. LinearSVC decision function sign decides class (positive -> Deceptive, negative -> Genuine).
+5. No confidence score, probability, or percentage is computed or exposed.
+6. Blank or empty text raises an error; never returns a guessed label.
 """
 
 import os
 import time
+import logging
 from typing import Dict, Any, Optional
 
 import joblib
@@ -20,11 +22,13 @@ from backend.app.preprocessing import normalize_text
 from backend.app.constants import InternalClass, get_display_label
 from backend.app.services.embedding import DistilBERTEmbeddingExtractor
 
+logger = logging.getLogger("revulens")
+
 
 class ClassificationService:
     """
     Handles real-time inference for review classification.
-    Optimized for high-throughput, low-latency execution.
+    Optimized for high-throughput, low-latency execution (<150 ms on CPU).
     """
 
     def __init__(
@@ -53,23 +57,19 @@ class ClassificationService:
 
     def classify(self, text: str) -> Dict[str, Any]:
         """
-        Classify raw review text into { label, display_label, confidence }.
+        Classify raw review text into { label, display_label, latency_ms }.
 
         Pipeline:
-        text -> normalize_text -> DistilBERT frozen embedding -> StandardScaler -> CalibratedClassifierCV -> (label, display_label, confidence)
+        text -> normalize_text -> DistilBERT frozen embedding -> StandardScaler -> LinearSVC -> (label, display_label)
+        Sign of decision_function decides class: > 0 -> Deceptive, <= 0 -> Genuine.
+        No confidence score is ever computed or returned.
         """
         start_time = time.perf_counter()
 
         # 1. Normalize text using shared preprocessing function
         cleaned = normalize_text(text)
         if not cleaned:
-            # Fallback for empty or non-text selections
-            return {
-                "label": InternalClass.GENUINE.value,
-                "display_label": get_display_label(InternalClass.GENUINE.value),
-                "confidence": 0.5000,
-                "latency_ms": round((time.perf_counter() - start_time) * 1000, 2)
-            }
+            raise ValueError("Review text cannot be blank or whitespace-only.")
 
         # 2. Extract frozen contextual embedding
         emb = self.extractor.extract([cleaned], batch_size=1, pooling_strategy=self.pooling_strategy)
@@ -77,24 +77,20 @@ class ClassificationService:
         # 3. Standardize features
         scaled = self.scaler.transform(emb)
 
-        # 4. Sign of SVM decision function decides class per GEMINI.md
+        # 4. Sign of SVM decision function strictly decides class per GEMINI.md
         if hasattr(self.classifier, "decision_function"):
             decision_score = float(self.classifier.decision_function(scaled)[0])
-            internal_label = InternalClass.DECEPTIVE.value if decision_score > 0 else InternalClass.GENUINE.value
-            p1 = float(1.0 / (1.0 + np.exp(-decision_score)))
-            confidence = p1 if decision_score > 0 else (1.0 - p1)
         else:
-            proba = self.classifier.predict_proba(scaled)[0]
-            p_deceptive = float(proba[1])
-            internal_label = InternalClass.DECEPTIVE.value if p_deceptive >= 0.5 else InternalClass.GENUINE.value
-            confidence = float(np.max(proba))
+            # Fallback for models without decision_function (e.g., standard linear weights)
+            decision_score = float(self.classifier.predict(scaled)[0])
 
+        internal_label = InternalClass.DECEPTIVE.value if decision_score > 0 else InternalClass.GENUINE.value
         display_lbl = get_display_label(internal_label)
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
         return {
             "label": internal_label,
             "display_label": display_lbl,
-            "confidence": round(float(confidence), 4),
+            "decision_score": decision_score,
             "latency_ms": elapsed_ms
         }

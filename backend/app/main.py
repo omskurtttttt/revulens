@@ -182,19 +182,48 @@ def classify_review(request: Request, payload: ClassifyRequest) -> ClassifyRespo
     Synchronous endpoint dispatched to threadpool per GEMINI.md to ensure
     FastAPI event loop is never blocked by model inference.
     Ultra-fast execution (<150 ms) without computing SHAP.
+    Never returns confidence score, probability, or raw decision score.
     """
+    # 1. Enforce MAX_CHARS rejection with HTTP 413 per GEMINI.md
+    if len(payload.text) > settings.MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Review text exceeds maximum length of {settings.MAX_CHARS} characters."
+        )
+
+    # 2. Check blank or whitespace-only text
+    words = payload.text.strip().split()
+    if not words:
+        raise HTTPException(
+            status_code=422,
+            detail="Review text cannot be blank or whitespace-only."
+        )
+
+    # 3. Apply shared MAX_WORDS truncation per GEMINI.md
+    truncated = len(words) > settings.MAX_WORDS
+    effective_text = " ".join(words[:settings.MAX_WORDS]) if truncated else payload.text
+
     classifier: ClassificationService = getattr(request.app.state, "classifier_service", None)
     if not classifier:
         raise HTTPException(status_code=503, detail="Classification model not ready.")
 
     try:
-        result = classifier.classify(payload.text)
+        result = classifier.classify(effective_text)
+        # Log debugging metrics only (endpoint, status, timing, score; never review text)
+        decision_score = result.get("decision_score")
+        if decision_score is not None:
+            logger.debug(
+                f"[Classify Debug] Score: {decision_score:.4f} | Latency: {result.get('latency_ms')}ms"
+            )
+
         return ClassifyResponse(
             label=result["label"],
             display_label=result["display_label"],
-            confidence=result["confidence"],
+            truncated=truncated,
             latency_ms=result.get("latency_ms")
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         logger.error(f"Classification error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
@@ -208,24 +237,45 @@ def explain_review(request: Request, payload: ExplainRequest) -> ExplainResponse
     Synchronous endpoint dispatched to threadpool per GEMINI.md to ensure
     FastAPI event loop is never blocked during heavy SHAP permutation sampling.
     Utilizes thread-safe in-memory caching and lock synchronization.
+    Never returns confidence score, probability, base value, or raw decision score.
     """
+    # 1. Enforce MAX_CHARS rejection with HTTP 413 per GEMINI.md
+    if len(payload.text) > settings.MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Review text exceeds maximum length of {settings.MAX_CHARS} characters."
+        )
+
+    # 2. Check blank or whitespace-only text
+    words = payload.text.strip().split()
+    if not words:
+        raise HTTPException(
+            status_code=422,
+            detail="Review text cannot be blank or whitespace-only."
+        )
+
+    # 3. Apply shared MAX_WORDS truncation per GEMINI.md
+    truncated = len(words) > settings.MAX_WORDS
+    effective_text = " ".join(words[:settings.MAX_WORDS]) if truncated else payload.text
+
     explainer: SHAPExplainerService = getattr(request.app.state, "explainer_service", None)
     if not explainer:
         raise HTTPException(status_code=503, detail="SHAP Explainer service not ready.")
 
     try:
         result = explainer.explain(
-            text=payload.text,
+            text=effective_text,
             max_evals=payload.max_evals,
-            max_words=payload.max_words
+            max_words=settings.MAX_WORDS
         )
         return ExplainResponse(
             tokens=result["tokens"],
-            base_value=result["base_value"],
-            prediction_deceptive_prob=result.get("prediction_deceptive_prob"),
+            truncated=truncated or result.get("truncated", False),
             latency_ms=result.get("latency_ms"),
             cached=result.get("cached", False)
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         logger.error(f"Explanation error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Explanation failed: {str(e)}")

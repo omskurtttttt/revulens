@@ -165,14 +165,7 @@ class SHAPExplainerService:
         start_time = time.perf_counter()
 
         if not text or not text.strip():
-            return {
-                "tokens": [],
-                "base_value": 0.5,
-                "prediction_deceptive_prob": 0.5,
-                "latency_ms": 0.0,
-                "cached": False,
-                "truncated": False
-            }
+            raise ValueError("Review text cannot be blank or whitespace-only.")
 
         # 1. Truncate text if exceeding max_words limit (latency control)
         effective_max_words = max_words or self.max_words
@@ -213,13 +206,6 @@ class SHAPExplainerService:
             else:
                 deceptive_weights = raw_values
 
-            # Base value for Deceptive class
-            raw_base = explanation.base_values[0]
-            if isinstance(raw_base, (np.ndarray, list)):
-                base_value = float(raw_base[1])
-            else:
-                base_value = float(raw_base)
-
             tokens_list = []
             for t, w in zip(raw_tokens, deceptive_weights):
                 clean_t = t.strip()
@@ -229,16 +215,10 @@ class SHAPExplainerService:
                         "weight": round(float(w), 4)
                     })
 
-            # Calculate final model prediction probability
-            prob_pred = self._pipeline_predict_proba([text])[0]
-            p_deceptive = float(prob_pred[1])
-
             elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
             result = {
                 "tokens": tokens_list,
-                "base_value": round(base_value, 4),
-                "prediction_deceptive_prob": round(p_deceptive, 4),
                 "latency_ms": elapsed_ms,
                 "cached": False,
                 "truncated": truncated

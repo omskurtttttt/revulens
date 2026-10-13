@@ -38,9 +38,10 @@ class Settings:
         "distilbert-base-multilingual-cased"
     )
 
-    # Explainability Defaults (per Step 6 latency benchmark decisions)
+    # Explainability & Input Limits (per GEMINI.md)
     DEFAULT_MAX_EVALS: int = int(os.getenv("SHAP_DEFAULT_MAX_EVALS", "60"))
-    MAX_WORDS: int = int(os.getenv("SHAP_MAX_WORDS", "100"))
+    MAX_WORDS: int = int(os.getenv("MAX_WORDS", os.getenv("SHAP_MAX_WORDS", "100")))
+    MAX_CHARS: int = int(os.getenv("MAX_CHARS", "2000"))
     CACHE_SIZE: int = int(os.getenv("SHAP_CACHE_SIZE", "256"))
 
     # CORS Origins (comma-separated string in env)

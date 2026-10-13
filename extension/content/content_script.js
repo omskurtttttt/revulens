@@ -208,23 +208,19 @@
           </span>
         </div>
 
-        <div id="revulens-confidence-container" class="revulens-meta-row" style="display: none;">
-          <span class="revulens-meta-label">Confidence:</span>
-          <div class="revulens-confidence-track">
-            <div id="revulens-confidence-bar" class="revulens-confidence-fill" style="width: 0%;"></div>
-          </div>
-          <span id="revulens-confidence-pct" class="revulens-meta-val">--%</span>
+        <div id="revulens-truncated-banner" class="revulens-truncated-banner" style="display: none;">
+          Long text: only the first ${CONFIG.SETTINGS.MAX_WORDS || 100} words were analyzed.
         </div>
 
         <div class="revulens-shap-section">
           <div class="revulens-shap-header">
             <span class="revulens-shap-title">Token Attribution (SHAP)</span>
-            <span id="revulens-shap-status" class="revulens-shap-loading">Computing word weights...</span>
+            <span id="revulens-shap-status" class="revulens-shap-loading">Loading explanation...</span>
           </div>
 
           <div class="revulens-legend">
-            <span class="revulens-legend-item"><span class="revulens-legend-dot dot-deceptive"></span> Pushes Deceptive</span>
-            <span class="revulens-legend-item"><span class="revulens-legend-dot dot-genuine"></span> Pushes Genuine</span>
+            <span class="revulens-legend-item"><span class="revulens-legend-dot dot-deceptive"></span> toward Deceptive</span>
+            <span class="revulens-legend-item"><span class="revulens-legend-dot dot-genuine"></span> toward Genuine</span>
           </div>
 
           <div id="revulens-token-cloud" class="revulens-token-cloud">
@@ -258,9 +254,6 @@
 
   function executeInspection(text, card) {
     const badgeEl = card.querySelector("#revulens-badge");
-    const confContainer = card.querySelector("#revulens-confidence-container");
-    const confBar = card.querySelector("#revulens-confidence-bar");
-    const confPct = card.querySelector("#revulens-confidence-pct");
     const shapStatus = card.querySelector("#revulens-shap-status");
     const tokenCloud = card.querySelector("#revulens-token-cloud");
 
@@ -275,26 +268,31 @@
           if (!card.parentElement) return; // Closed before response
 
           if (chrome.runtime.lastError || !response || !response.success) {
-            const errMsg = (response && response.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "Could not reach backend service.";
+            const rawError = (response && response.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "";
             badgeEl.className = "revulens-status-badge revulens-badge-error";
-            badgeEl.textContent = "Connection Error (Refresh Tab F5)";
-            badgeEl.title = errMsg;
-            shapStatus.textContent = "Backend offline or tab needs refresh";
+            if (rawError.includes("413") || rawError.toLowerCase().includes("exceeds maximum length")) {
+              badgeEl.textContent = "Text Too Long";
+              shapStatus.textContent = `Text exceeds maximum allowed length (${CONFIG.SETTINGS.MAX_CHARS || 2000} chars).`;
+            } else if (rawError.includes("422") || rawError.toLowerCase().includes("blank or whitespace")) {
+              badgeEl.textContent = "Invalid Selection";
+              shapStatus.textContent = "Select review text on the page to analyze it.";
+            } else {
+              badgeEl.textContent = "Unavailable";
+              shapStatus.textContent = "Analysis service unavailable. Check the connection and try again.";
+            }
             return;
           }
 
-          const { label, display_label, confidence } = response.data;
+          const { label, display_label, truncated } = response.data;
           const isDeceptive = label === "Deceptive";
 
           badgeEl.className = `revulens-status-badge ${isDeceptive ? "badge-deceptive" : "badge-genuine"}`;
           badgeEl.textContent = display_label;
 
-          // Display confidence percentage
-          const pct = Math.round(confidence * 100);
-          confContainer.style.display = "flex";
-          confBar.style.width = `${pct}%`;
-          confBar.className = `revulens-confidence-fill ${isDeceptive ? "fill-deceptive" : "fill-genuine"}`;
-          confPct.textContent = `${pct}%`;
+          if (truncated) {
+            const banner = card.querySelector("#revulens-truncated-banner");
+            if (banner) banner.style.display = "block";
+          }
         }
       );
     } catch (err) {
@@ -325,9 +323,14 @@
             return;
           }
 
-          const { tokens, latency_ms, cached } = response.data;
+          const { tokens, latency_ms, cached, truncated } = response.data;
           shapStatus.textContent = `Ready (${tokens.length} tokens, ${latency_ms ? latency_ms.toFixed(0) : 0}ms${cached ? " - cached" : ""})`;
           shapStatus.className = "revulens-shap-ready";
+
+          if (truncated) {
+            const banner = card.querySelector("#revulens-truncated-banner");
+            if (banner) banner.style.display = "block";
+          }
 
           renderTokenCloud(tokens, tokenCloud);
           applyInlineWordHighlights(tokens);
@@ -357,15 +360,15 @@
       let dirText = "Neutral influence";
       if (isDeceptivePush) {
         cls = "token-deceptive";
-        dirText = "Pushes toward Potentially Deceptive";
+        dirText = "toward Deceptive";
       } else if (isGenuinePush) {
         cls = "token-genuine";
-        dirText = "Pushes toward Likely Genuine";
+        dirText = "toward Genuine";
       }
 
       span.className = `revulens-token-chip ${cls}`;
       span.textContent = tok.text;
-      span.title = `"${tok.text}": ${weight >= 0 ? "+" : ""}${weight.toFixed(4)} (${dirText})`;
+      span.title = dirText;
 
       container.appendChild(span);
     });

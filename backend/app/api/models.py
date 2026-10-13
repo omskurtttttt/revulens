@@ -2,12 +2,13 @@
 Pydantic API Schemas for RevuLens FastAPI Service.
 
 Adheres strictly to GEMINI.md API contract:
-- POST /classify -> { label, display_label, confidence }
-- POST /explain  -> { tokens: [{ text, weight }], base_value }
+- POST /classify -> { label, display_label, truncated, latency_ms }
+- POST /explain  -> { tokens: [{ text, weight }], truncated, latency_ms, cached }
+- No confidence score, probability, base value, or raw decision score is ever returned.
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------
@@ -22,11 +23,19 @@ class ClassifyRequest(BaseModel):
         description="Raw highlighted text selection from the shopping page."
     )
 
+    @field_validator("text")
+    @classmethod
+    def validate_non_blank(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Review text cannot be blank or whitespace-only.")
+        return value
+
 
 class ClassifyResponse(BaseModel):
     """
     Response schema for POST /classify.
-    Strictly follows GEMINI.md contract: { label, display_label, confidence }.
+    Strictly follows GEMINI.md contract: { label, display_label, truncated, latency_ms }.
+    Never exposes confidence scores, probabilities, or decision function scores.
     """
     label: str = Field(
         ...,
@@ -36,15 +45,13 @@ class ClassifyResponse(BaseModel):
         ...,
         description="User-facing display label: 'Likely Genuine' or 'Potentially Deceptive'."
     )
-    confidence: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description="Calibrated model confidence score between 0.0 and 1.0."
+    truncated: bool = Field(
+        default=False,
+        description="Whether input text exceeded MAX_WORDS and was truncated."
     )
     latency_ms: Optional[float] = Field(
         default=None,
-        description="Server-side processing time in milliseconds (ISO/IEC 25010 metric)."
+        description="Server-side processing time in milliseconds."
     )
 
 
@@ -72,32 +79,36 @@ class ExplainRequest(BaseModel):
         description="Maximum word count to evaluate before truncation."
     )
 
+    @field_validator("text")
+    @classmethod
+    def validate_non_blank(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Review text cannot be blank or whitespace-only.")
+        return value
+
 
 class TokenAttribution(BaseModel):
     """Individual word/token attribution weight."""
     text: str = Field(..., description="Token text string.")
     weight: float = Field(
         ...,
-        description="SHAP attribution weight. Positive (>0) -> Deceptive, Negative (<0) -> Genuine."
+        description="SHAP attribution weight. Positive (>0) pushes toward Deceptive, Negative (<0) toward Genuine."
     )
 
 
 class ExplainResponse(BaseModel):
     """
     Response schema for POST /explain.
-    Strictly follows GEMINI.md contract: { tokens: [{ text, weight }], base_value }.
+    Strictly follows GEMINI.md contract: { tokens: [{ text, weight }], truncated, latency_ms, cached }.
+    Never exposes confidence scores, probabilities, base value, or decision function scores.
     """
     tokens: List[TokenAttribution] = Field(
         ...,
         description="Ordered list of word tokens with signed SHAP contribution weights."
     )
-    base_value: float = Field(
-        ...,
-        description="SHAP base value (expected P(Deceptive))."
-    )
-    prediction_deceptive_prob: Optional[float] = Field(
-        default=None,
-        description="Calibrated probability of Deceptive class."
+    truncated: bool = Field(
+        default=False,
+        description="Whether input text exceeded MAX_WORDS and was truncated."
     )
     latency_ms: Optional[float] = Field(
         default=None,

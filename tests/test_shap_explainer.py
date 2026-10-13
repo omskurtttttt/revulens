@@ -59,15 +59,16 @@ class TestSHAPExplainerService(unittest.TestCase):
         res = self.explainer.explain(text, max_evals=25)
 
         self.assertIn("tokens", res)
-        self.assertIn("base_value", res)
-        self.assertIn("prediction_deceptive_prob", res)
         self.assertIn("latency_ms", res)
         self.assertIn("cached", res)
+        self.assertIn("truncated", res)
+        self.assertNotIn("base_value", res)
+        self.assertNotIn("prediction_deceptive_prob", res)
 
         self.assertIsInstance(res["tokens"], list)
         self.assertGreater(len(res["tokens"]), 0)
-        self.assertIsInstance(res["base_value"], float)
-        self.assertIsInstance(res["prediction_deceptive_prob"], float)
+        self.assertIsInstance(res["latency_ms"], float)
+        self.assertIsInstance(res["truncated"], bool)
 
         # Check token element structure
         for token in res["tokens"]:
@@ -90,7 +91,7 @@ class TestSHAPExplainerService(unittest.TestCase):
         res2 = self.explainer.explain(text, max_evals=25)
         self.assertTrue(res2["cached"])
         self.assertEqual(res1["tokens"], res2["tokens"])
-        self.assertEqual(res1["prediction_deceptive_prob"], res2["prediction_deceptive_prob"])
+        self.assertEqual(res1["truncated"], res2["truncated"])
 
     def test_max_words_truncation(self):
         """Verify long texts exceeding max_words are truncated to safeguard latency."""

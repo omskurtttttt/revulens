@@ -51,10 +51,10 @@ const REVULENS_CONFIG = {
   SETTINGS: {
     DEFAULT_MAX_EVALS: 60,
     MAX_WORDS: 100,
+    MAX_CHARS: 2000,
     MIN_SELECTION_CHARS: 5,
   },
-  DISCLAIMER_TEXT:
-    "RevuLens detects learned textual patterns of GPT-2-generated text. It provides an informational assessment and does not assert legal or ground-truth authenticity.",
+  DISCLAIMER_TEXT: "Informational only; not proof of fraud.",
 };
 
 // Make config universally accessible across globalThis, window, and worker scopes

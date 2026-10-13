@@ -117,6 +117,17 @@ class TestExtensionContracts(unittest.TestCase):
             self.assertNotIn("fake word", content.lower())
             self.assertNotIn("verified authentic", content.lower())
 
+    def test_no_confidence_meter_in_ui(self):
+        """
+        Verify GEMINI.md rule: No confidence score anywhere (UI, API, logs).
+        content_script.js must not contain a confidence meter or display confidence percentages.
+        """
+        with open(self.content_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertNotIn("revulens-confidence-container", content)
+        self.assertNotIn("confidence * 100", content)
+
 
 if __name__ == "__main__":
     unittest.main()
