@@ -42,8 +42,38 @@ class TestDatasetPipeline(unittest.TestCase):
         self.assertEqual(test_deceptive, 5)
 
     def test_pipeline_execution_and_artifacts(self):
+        import csv
+
+        # Create minimal synthetic raw CSVs in self.temp_dir so test is fully self-contained
+        # and passes in fresh CI environments where raw dataset dumps are gitignored.
+        salminen_csv = os.path.join(self.temp_dir, "sample_salminen.csv")
+        with open(salminen_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["category", "rating", "label", "text_"])
+            writer.writeheader()
+            for i in range(20):
+                writer.writerow({"category": "Electronics", "rating": "5.0", "label": "OR", "text_": f"Sample genuine product review {i}"})
+                writer.writerow({"category": "Electronics", "rating": "1.0", "label": "CG", "text_": f"Sample deceptive product review {i}"})
+
+        firecs_train_csv = os.path.join(self.temp_dir, "sample_firecs_train.csv")
+        with open(firecs_train_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["review", "label"])
+            writer.writeheader()
+            writer.writerow({"review": "Maganda ang item mabilis dumating", "label": "positive"})
+
+        firecs_test_csv = os.path.join(self.temp_dir, "sample_firecs_test.csv")
+        with open(firecs_test_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["review", "label"])
+            writer.writeheader()
+            writer.writerow({"review": "Sira ang item pagdating sa akin", "label": "negative"})
+
         output_dir = os.path.join(self.temp_dir, "processed")
-        metadata = run_pipeline(output_dir=output_dir)
+        metadata = run_pipeline(
+            raw_salminen_path=salminen_csv,
+            firecs_train_path=firecs_train_csv,
+            firecs_test_path=firecs_test_csv,
+            output_dir=output_dir,
+            random_state=42
+        )
 
         self.assertIn("splits", metadata)
         self.assertEqual(metadata["dataset_rules_version"], "GEMINI.md (80/10/10 split, fixed seed 42)")
