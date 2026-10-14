@@ -13,7 +13,7 @@
         <div class="logo-icon">RL</div>
         <div class="brand-text">
           <h1>RevuLens</h1>
-          <span class="subtext">Explainable Review Inspector</span>
+          <span class="subtext">Review Inspector</span>
         </div>
       </div>
       <div id="backend-status" class="status-indicator checking" title="Checking backend status">
@@ -23,42 +23,54 @@
     </header>
 
     <main class="content">
-      <section class="card stats-card">
-        <h2>Page Analysis</h2>
-        <div class="stats-grid">
-          <div class="stat-item">
-            <span class="stat-value" id="total-analyzed">0</span>
-            <span class="stat-label">Scanned</span>
-          </div>
-          <div class="stat-item genuine">
-            <span class="stat-value" id="count-genuine">0</span>
-            <span class="stat-label">Likely Genuine</span>
-          </div>
-          <div class="stat-item deceptive">
-            <span class="stat-value" id="count-deceptive">0</span>
-            <span class="stat-label">Potentially Deceptive</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="card settings-card">
+      <!-- 1. Minimal On / Off Toggle -->
+      <section class="card toggle-card">
         <div class="setting-row">
           <div>
-            <div class="setting-title">In-Page Highlights</div>
-            <div class="setting-desc">Highlight token attribution words</div>
+            <div class="setting-title" id="toggle-title">RevuLens Active</div>
+            <div class="setting-desc" id="toggle-desc">Analyze selected review text</div>
           </div>
-          <label class="switch">
-            <input type="checkbox" id="toggle-highlights" checked>
+          <label class="switch" for="toggle-revulens">
+            <input type="checkbox" id="toggle-revulens" checked>
             <span class="slider"></span>
           </label>
         </div>
       </section>
+
+      <!-- 2. How to Use -->
+      <section class="card help-card">
+        <h2>How to Use</h2>
+        <ol class="help-steps">
+          <li><strong>Select review text</strong> on any shopping page.</li>
+          <li>Click the floating <strong>Analyze</strong> button.</li>
+          <li>View the classification badge and word-level highlights.</li>
+        </ol>
+        <p class="taglish-note">Note: Taglish (Filipino-English) review analysis is exploratory.</p>
+      </section>
+
+      <!-- 3. Highlight Colors Explanation -->
+      <section class="card legend-card">
+        <h2>Highlight Colors</h2>
+        <div class="color-guide">
+          <div class="guide-item">
+            <span class="guide-swatch deceptive-swatch">word</span>
+            <div class="guide-text">
+              <strong>Rose with solid underline</strong>: pushes toward <em>Potentially Deceptive</em>.
+            </div>
+          </div>
+          <div class="guide-item">
+            <span class="guide-swatch genuine-swatch">word</span>
+            <div class="guide-text">
+              <strong>Green with dotted underline</strong>: pushes toward <em>Likely Genuine</em>.
+            </div>
+          </div>
+        </div>
+        <p class="guide-caption">Words that influenced the result. A stronger shade indicates a stronger influence.</p>
+      </section>
     </main>
 
     <footer class="footer">
-      <p class="disclaimer">
-        RevuLens is an informational research tool using DistilBERT-SVM & SHAP. Does not assert legal authenticity.
-      </p>
+      <p class="disclaimer">Informational only; not proof of fraud.</p>
     </footer>
   </div>
 

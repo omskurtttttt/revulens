@@ -78,12 +78,7 @@ async function handleClassify(payload) {
     throw new Error(`Backend classification error (${response.status}): ${errorText}`);
   }
 
-  const data = await response.json();
-
-  // Update session counters in chrome.storage.local
-  updateScanStats(data.label);
-
-  return data;
+  return await response.json();
 }
 
 /**
@@ -146,26 +141,4 @@ async function fetchWithTimeout(resource, options = {}, timeoutMs = 8000) {
     }
     throw new Error(`Network error connecting to RevuLens backend: ${err.message}. Ensure backend is running at ${CONFIG.API_BASE_URL}.`);
   }
-}
-
-/**
- * Increment local stats storage for popup display.
- */
-function updateScanStats(label) {
-  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
-    return;
-  }
-
-  chrome.storage.local.get(["totalScanned", "countGenuine", "countDeceptive"], (result) => {
-    const total = (result.totalScanned || 0) + 1;
-    const isDeceptive = label === "Deceptive";
-    const genuine = (result.countGenuine || 0) + (isDeceptive ? 0 : 1);
-    const deceptive = (result.countDeceptive || 0) + (isDeceptive ? 1 : 0);
-
-    chrome.storage.local.set({
-      totalScanned: total,
-      countGenuine: genuine,
-      countDeceptive: deceptive,
-    });
-  });
 }

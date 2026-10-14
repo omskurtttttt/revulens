@@ -27,12 +27,12 @@ const REVULENS_CONFIG = {
   // Single constant mapping for token and badge styling
   COLOR_MAP: {
     deceptive: {
-      background: "rgba(239, 68, 68, 0.22)",
-      border: "rgba(220, 38, 38, 0.55)",
+      background: "rgba(244, 63, 94, 0.22)",
+      border: "rgba(225, 29, 72, 0.55)",
       text: "#991b1b",
-      badgeBg: "#fef2f2",
-      badgeText: "#991b1b",
-      badgeBorder: "#fecaca",
+      badgeBg: "#fffbeb",
+      badgeText: "#92400e",
+      badgeBorder: "#fde68a",
     },
     genuine: {
       background: "rgba(34, 197, 94, 0.22)",

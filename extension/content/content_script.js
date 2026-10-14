@@ -5,11 +5,15 @@
  * 1. Consumer selects (highlights) review text on the page (window.getSelection()).
  *    Works on any shopping site through text selection without fragile DOM selectors.
  * 2. Never calls the backend directly; sends requests via chrome.runtime.sendMessage to service worker.
- * 3. Shows classification badge ("Likely Genuine" / "Potentially Deceptive") and confidence.
- * 4. Renders a color-coded word overlay based on SHAP token weights:
- *    - Positive weights (> 0) push toward Deceptive.
- *    - Negative weights (< 0) push toward Genuine.
- * 5. Single source of truth color mapping from config.js.
+ * 3. Shows floating "Analyze" button near selection.
+ * 4. Two-stage display: /classify first (badge), then /explain (word highlights).
+ * 5. Color-coded SHAP token highlights directly on selected text:
+ *    - Deceptive-leaning: rose background with solid underline.
+ *    - Genuine-leaning: green background with dotted underline.
+ *    - Stronger weight = stronger shade.
+ *    - Tooltip on hover says "toward Deceptive" or "toward Genuine" (never a number).
+ *    - Terminology: strictly uses "words that influenced the result".
+ * 6. Respects minimal popup on/off toggle via chrome.storage.local ("revulensEnabled").
  */
 
 (function () {
@@ -23,25 +27,45 @@
       Deceptive: "Potentially Deceptive",
     },
     COLOR_MAP: {
-      deceptive: { text: "#991b1b", background: "rgba(239, 68, 68, 0.22)", border: "rgba(220, 38, 38, 0.55)" },
+      deceptive: { text: "#991b1b", background: "rgba(244, 63, 94, 0.22)", border: "rgba(225, 29, 72, 0.55)" },
       genuine: { text: "#166534", background: "rgba(34, 197, 94, 0.22)", border: "rgba(22, 163, 74, 0.55)" },
       neutral: { text: "inherit", background: "transparent", border: "transparent" },
     },
     SETTINGS: {
       MIN_SELECTION_CHARS: 5,
       DEFAULT_MAX_EVALS: 60,
+      MAX_WORDS: 100,
+      MAX_CHARS: 2000,
     },
-    DISCLAIMER_TEXT:
-      "RevuLens detects learned textual patterns of GPT-2-generated text. It provides an informational assessment and does not assert legal or ground-truth authenticity.",
+    DISCLAIMER_TEXT: "Informational only; not proof of fraud.",
   };
 
+  let isExtensionEnabled = true;
   let activeTriggerBtn = null;
   let activeCard = null;
   let activeHighlightSpans = [];
   let currentSelectionText = "";
   let currentSelectionRange = null;
 
-  console.log("[RevuLens] Content script active. Highlight any review text to inspect.");
+  // Listen to popup on/off toggle state
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(["revulensEnabled"], (result) => {
+      if (result && result.revulensEnabled !== undefined) {
+        isExtensionEnabled = result.revulensEnabled !== false;
+      }
+    });
+
+    if (chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === "local" && changes.revulensEnabled !== undefined) {
+          isExtensionEnabled = changes.revulensEnabled.newValue !== false;
+          if (!isExtensionEnabled) {
+            cleanupAll();
+          }
+        }
+      });
+    }
+  }
 
   // Listen for user text selection
   document.addEventListener("mouseup", handleSelectionChange);
@@ -66,8 +90,15 @@
   });
 
   function handleSelectionChange(e) {
-    // If the event target is inside RevuLens UI, ignore completely to avoid destroying trigger
-    if (e && e.target && (e.target.closest && e.target.closest(".revulens-ui") || activeTriggerBtn && activeTriggerBtn.contains(e.target))) {
+    if (!isExtensionEnabled) {
+      if (activeTriggerBtn && !activeCard) {
+        removeTriggerBtn();
+      }
+      return;
+    }
+
+    // If the event target is inside RevuLens UI, ignore completely
+    if (e && e.target && ((e.target.closest && e.target.closest(".revulens-ui")) || (activeTriggerBtn && activeTriggerBtn.contains(e.target)))) {
       return;
     }
 
@@ -102,7 +133,7 @@
       if (rect.width > 0 && rect.height > 0) {
         showTriggerButton(rect);
       }
-    } catch (err) {
+    } catch (_err) {
       // Ignore cross-frame selection errors
     }
   }
@@ -112,17 +143,17 @@
 
     const btn = document.createElement("button");
     btn.className = "revulens-ui revulens-trigger-btn";
-    btn.innerHTML = `<span class="revulens-logo-dot"></span> Inspect with RevuLens`;
-    btn.title = "Inspect selected review for deceptive patterns";
+    btn.innerHTML = `<span class="revulens-logo-dot"></span> Analyze`;
+    btn.title = "Analyze selected review text with RevuLens";
 
     // Viewport-relative coordinates (fixed positioning)
     const top = Math.max(10, rect.top - 42);
-    const left = Math.max(10, Math.min(rect.left + Math.max(0, (rect.width - 160) / 2), window.innerWidth - 180));
+    const left = Math.max(10, Math.min(rect.left + Math.max(0, (rect.width - 120) / 2), window.innerWidth - 140));
 
     btn.style.top = `${top}px`;
     btn.style.left = `${left}px`;
 
-    // CRITICAL: Prevent mousedown from collapsing the text selection in the host page
+    // Prevent mousedown from collapsing the text selection in the host page
     btn.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -163,13 +194,27 @@
   }
 
   function clearWordHighlights() {
+    if (!activeHighlightSpans || activeHighlightSpans.length === 0) return;
+
+    const parentsToNormalize = new Set();
     activeHighlightSpans.forEach((span) => {
-      if (span.parentElement) {
+      const parent = span.parentElement;
+      if (parent) {
+        parentsToNormalize.add(parent);
         const textNode = document.createTextNode(span.textContent);
-        span.parentElement.replaceChild(textNode, span);
+        parent.replaceChild(textNode, span);
       }
     });
+
     activeHighlightSpans = [];
+
+    parentsToNormalize.forEach((parent) => {
+      try {
+        parent.normalize();
+      } catch (_e) {
+        // Ignore normalize errors if parent was detached
+      }
+    });
   }
 
   function openInspectionCard(rect, textToInspect) {
@@ -214,7 +259,7 @@
 
         <div class="revulens-shap-section">
           <div class="revulens-shap-header">
-            <span class="revulens-shap-title">Token Attribution (SHAP)</span>
+            <span class="revulens-shap-title">Words that influenced the result (SHAP)</span>
             <span id="revulens-shap-status" class="revulens-shap-loading">Loading explanation...</span>
           </div>
 
@@ -265,7 +310,7 @@
           payload: { text },
         },
         (response) => {
-          if (!card.parentElement) return; // Closed before response
+          if (!card.parentElement) return;
 
           if (chrome.runtime.lastError || !response || !response.success) {
             const rawError = (response && response.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || "";
@@ -275,7 +320,13 @@
               shapStatus.textContent = `Text exceeds maximum allowed length (${CONFIG.SETTINGS.MAX_CHARS || 2000} chars).`;
             } else if (rawError.includes("422") || rawError.toLowerCase().includes("blank or whitespace")) {
               badgeEl.textContent = "Invalid Selection";
-              shapStatus.textContent = "Select review text on the page to analyze it.";
+              shapStatus.innerHTML = 'Select review text on the page to analyze it. <button type="button" class="revulens-help-inline-btn" id="revulens-btn-how-to-use">How to use</button>';
+              const helpBtn = shapStatus.querySelector("#revulens-btn-how-to-use");
+              if (helpBtn) {
+                helpBtn.addEventListener("click", () => {
+                  shapStatus.textContent = "Select review text on the page to analyze it. Taglish review analysis is exploratory.";
+                });
+              }
             } else {
               badgeEl.textContent = "Unavailable";
               shapStatus.textContent = "Analysis service unavailable. Check the connection and try again.";
@@ -286,6 +337,7 @@
           const { label, display_label, truncated } = response.data;
           const isDeceptive = label === "Deceptive";
 
+          // Amber badge for Potentially Deceptive, green for Likely Genuine
           badgeEl.className = `revulens-status-badge ${isDeceptive ? "badge-deceptive" : "badge-genuine"}`;
           badgeEl.textContent = display_label;
 
@@ -336,7 +388,7 @@
           applyInlineWordHighlights(tokens);
         }
       );
-    } catch (err) {
+    } catch (_err) {
       if (shapStatus) {
         shapStatus.textContent = "Refresh tab to reload extension";
       }
@@ -374,16 +426,172 @@
     });
   }
 
-  function applyInlineWordHighlights(_tokens) {
-    // If the original selection range is still active in the DOM, we can overlay highlight markers
-    if (!currentSelectionRange) return;
+  /**
+   * Highlights words that influenced the result directly on the selected text.
+   * - Deceptive-leaning: rose background with solid underline.
+   * - Genuine-leaning: green background with dotted underline.
+   * - Stronger weight produces a stronger shade (higher alpha).
+   * - Tooltip on hover says "toward Deceptive" or "toward Genuine" (never a number).
+   */
+  function applyInlineWordHighlights(tokens) {
+    if (!currentSelectionRange || !tokens || tokens.length === 0) return;
+
+    clearWordHighlights();
+
+    // 1. Build lookup dictionary for tokens with significant influence
+    const tokenMap = new Map();
+    let maxMag = 0.05;
+    tokens.forEach((t) => {
+      const mag = Math.abs(t.weight);
+      if (mag > maxMag) maxMag = mag;
+    });
+
+    tokens.forEach((t) => {
+      const weight = t.weight;
+      if (Math.abs(weight) < 0.005) return; // ignore neutral noise
+
+      const lower = t.text.toLowerCase().trim();
+      if (!lower) return;
+
+      const isDeceptive = weight > 0;
+      const normalized = Math.min(1.0, Math.abs(weight) / maxMag);
+      const alpha = (0.20 + 0.35 * normalized).toFixed(3);
+      const borderAlpha = Math.min(1.0, parseFloat(alpha) + 0.35).toFixed(3);
+
+      tokenMap.set(lower, {
+        direction: isDeceptive ? "deceptive" : "genuine",
+        tooltip: isDeceptive ? "toward Deceptive" : "toward Genuine",
+        bgColor: isDeceptive
+          ? `rgba(244, 63, 94, ${alpha})`
+          : `rgba(34, 197, 94, ${alpha})`,
+        borderColor: isDeceptive
+          ? `rgba(225, 29, 72, ${borderAlpha})`
+          : `rgba(22, 163, 74, ${borderAlpha})`,
+      });
+    });
+
+    if (tokenMap.size === 0) return;
 
     try {
-      // Find matching words in the selected range and apply subtle highlighting
-      const containerNode = currentSelectionRange.commonAncestorContainer;
-      if (!containerNode) return;
-    } catch (e) {
-      console.warn("[RevuLens] Could not apply inline range highlights:", e);
+      // 2. Identify all text nodes intersecting currentSelectionRange
+      const root = currentSelectionRange.commonAncestorContainer;
+      const textNodes = [];
+
+      if (root.nodeType === Node.TEXT_NODE) {
+        textNodes.push(root);
+      } else {
+        const walker = document.createTreeWalker(
+          root,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: function (node) {
+              if (!node.nodeValue || !node.nodeValue.trim()) {
+                return NodeFilter.FILTER_REJECT;
+              }
+              if (currentSelectionRange.intersectsNode) {
+                return currentSelectionRange.intersectsNode(node)
+                  ? NodeFilter.FILTER_ACCEPT
+                  : NodeFilter.FILTER_REJECT;
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            },
+          }
+        );
+
+        let currentNode = walker.nextNode();
+        while (currentNode) {
+          textNodes.push(currentNode);
+          currentNode = walker.nextNode();
+        }
+      }
+
+      if (textNodes.length === 0) return;
+
+      const wordRegex = /([a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF'-]+)/g;
+
+      // 3. Highlight matching words within the selection range
+      textNodes.forEach((node) => {
+        const parent = node.parentNode;
+        if (!parent || (parent.closest && parent.closest(".revulens-ui"))) {
+          return;
+        }
+
+        const fullText = node.nodeValue;
+        let startIdx = 0;
+        let endIdx = fullText.length;
+
+        if (node === currentSelectionRange.startContainer) {
+          startIdx = currentSelectionRange.startOffset;
+        }
+        if (node === currentSelectionRange.endContainer) {
+          endIdx = currentSelectionRange.endOffset;
+        }
+
+        if (startIdx >= endIdx) return;
+
+        const beforeText = fullText.slice(0, startIdx);
+        const targetText = fullText.slice(startIdx, endIdx);
+        const afterText = fullText.slice(endIdx);
+
+        const fragment = document.createDocumentFragment();
+        if (beforeText) {
+          fragment.appendChild(document.createTextNode(beforeText));
+        }
+
+        let lastIdx = 0;
+        let match;
+        let highlightedAny = false;
+
+        while ((match = wordRegex.exec(targetText)) !== null) {
+          const matchStart = match.index;
+          const matchEnd = match.index + match[0].length;
+          const word = match[0];
+          const lowerWord = word.toLowerCase();
+
+          if (matchStart > lastIdx) {
+            fragment.appendChild(
+              document.createTextNode(targetText.slice(lastIdx, matchStart))
+            );
+          }
+
+          const tokenInfo = tokenMap.get(lowerWord);
+          if (tokenInfo) {
+            const span = document.createElement("span");
+            span.className = `revulens-ui revulens-inline-highlight revulens-inline-${tokenInfo.direction}`;
+            span.textContent = word;
+            span.title = tokenInfo.tooltip;
+            span.style.backgroundColor = tokenInfo.bgColor;
+            span.style.borderBottom =
+              tokenInfo.direction === "deceptive"
+                ? `2px solid ${tokenInfo.borderColor}`
+                : `2px dotted ${tokenInfo.borderColor}`;
+
+            activeHighlightSpans.push(span);
+            fragment.appendChild(span);
+            highlightedAny = true;
+          } else {
+            fragment.appendChild(document.createTextNode(word));
+          }
+
+          lastIdx = matchEnd;
+        }
+
+        if (lastIdx < targetText.length) {
+          fragment.appendChild(
+            document.createTextNode(targetText.slice(lastIdx))
+          );
+        }
+
+        if (afterText) {
+          fragment.appendChild(document.createTextNode(afterText));
+        }
+
+        if (highlightedAny) {
+          parent.replaceChild(fragment, node);
+        }
+      });
+    } catch (err) {
+      console.warn("[RevuLens] Could not apply inline range highlights:", err);
     }
   }
 })();

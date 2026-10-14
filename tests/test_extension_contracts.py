@@ -128,6 +128,86 @@ class TestExtensionContracts(unittest.TestCase):
         self.assertNotIn("revulens-confidence-container", content)
         self.assertNotIn("confidence * 100", content)
 
+    def test_inline_word_highlights_implementation(self):
+        """
+        Verify GEMINI.md TODO 3 inline highlighting requirements:
+        1. applyInlineWordHighlights is implemented in content_script.js.
+        2. overlay.css defines .revulens-inline-highlight, .revulens-inline-deceptive, .revulens-inline-genuine.
+        3. Deceptive-leaning has solid underline; Genuine-leaning has dotted underline (accessible).
+        4. Tooltips say 'toward Deceptive' or 'toward Genuine', never numbers.
+        5. Terminology uses 'words that influenced the result', never 'fake words' or 'deceptive words'.
+        6. Potentially Deceptive badge uses amber styling per GEMINI.md.
+        """
+        with open(self.content_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        with open(self.css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+
+        # 1. Implementation presence
+        self.assertIn("function applyInlineWordHighlights(", content)
+        self.assertIn("clearWordHighlights()", content)
+
+        # 2. CSS classes
+        self.assertIn(".revulens-inline-highlight", css)
+        self.assertIn(".revulens-inline-deceptive", css)
+        self.assertIn(".revulens-inline-genuine", css)
+
+        # 3. Accessibility underlines
+        self.assertIn("solid", css)
+        self.assertIn("dotted", css)
+
+        # 4. Tooltip wording
+        self.assertIn('"toward Deceptive"', content)
+        self.assertIn('"toward Genuine"', content)
+
+        # 5. Terminology
+        self.assertIn("Words that influenced the result", content)
+        self.assertNotIn("deceptive words", content.lower())
+        self.assertNotIn("fake words", content.lower())
+
+        # 6. Amber badge styling for deceptive
+        self.assertIn("#fffbeb", css)
+
+    def test_popup_gemini_compliance(self):
+        """
+        Verify GEMINI.md popup rules:
+        - Minimal: on/off toggle (make it work or remove it), 'How to use'
+          (including that Taglish behavior is exploratory), and a short explanation
+          of the highlight colors. Nothing else.
+        - Do not build: Confidence meter, automatic page scanning, full-screen modals,
+          per-platform DOM parsing, user accounts, history.
+        """
+        popup_html_path = os.path.join(self.ext_dir, "popup", "popup.html")
+        popup_js_path = os.path.join(self.ext_dir, "popup", "popup.js")
+
+        self.assertTrue(os.path.exists(popup_html_path))
+        self.assertTrue(os.path.exists(popup_js_path))
+
+        with open(popup_html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        with open(popup_js_path, "r", encoding="utf-8") as f:
+            js = f.read()
+
+        # On/off toggle exists and binds to revulensEnabled
+        self.assertIn('id="toggle-revulens"', html)
+        self.assertIn("revulensEnabled", js)
+
+        # How to use section present and mentions Taglish is exploratory
+        self.assertIn("How to Use", html)
+        self.assertIn("Taglish", html)
+        self.assertIn("exploratory", html.lower())
+
+        # Highlight colors explained
+        self.assertIn("Highlight Colors", html)
+        self.assertIn("solid underline", html)
+        self.assertIn("dotted underline", html)
+
+        # Strict prohibition: No scan stats, history, or counters
+        self.assertNotIn("total-analyzed", html)
+        self.assertNotIn("count-genuine", html)
+        self.assertNotIn("count-deceptive", html)
+        self.assertNotIn("totalScanned", js)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,7 @@ export default [
         HTMLElement: "readonly",
         Range: "readonly",
         Node: "readonly",
+        NodeFilter: "readonly",
         DOMParser: "readonly",
         module: "readonly",
         exports: "readonly"
